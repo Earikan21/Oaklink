@@ -94,3 +94,34 @@ class FakeMarket:
 
     def screen(self, query: dict) -> list[str]:
         return list(self.data.get("__screen__", []))
+
+
+# ---------------------------------------------------------------------------
+# $3k reference portfolio: VTI 1500 / BND 900 / CASH 600 (50/0/30/20)
+# ---------------------------------------------------------------------------
+def make_holding(ticker: str, sleeve: str, shares: float, cost_basis: float = 1.0) -> Holding:
+    return Holding(ticker=ticker, sleeve=sleeve, shares=shares, cost_basis=cost_basis, lot_date=date(2026, 11, 22))
+
+
+@pytest.fixture
+def three_k_portfolio():
+    holdings = [
+        make_holding("VTI", "indexed_equity", 5, 300.0),
+        make_holding("BND", "bonds", 12, 75.0),
+        make_holding("CASH", "cash", 600.0),
+    ]
+    values = {"VTI": 1500.0, "BND": 900.0, "CASH": 600.0}
+    return holdings, values
+
+
+@pytest.fixture
+def fake_market_3k():
+    def entry(ticker, price, name):
+        q = Quote(ticker=ticker, price=price, bid=None, ask=None, expense_ratio=0.0003, nav=None,
+                  quote_type="ETF", avg_volume=None)
+        return {"quote": q, "info": {"longName": name, "quoteType": "ETF", "netExpenseRatio": 0.03}}
+
+    return FakeMarket({
+        "VTI": entry("VTI", 300.0, "Vanguard Total Stock Market ETF"),
+        "BND": entry("BND", 75.0, "Vanguard Total Bond Market ETF"),
+    })
