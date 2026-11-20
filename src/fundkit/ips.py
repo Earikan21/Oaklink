@@ -7,7 +7,8 @@ from fundkit.models import Holding, Quote, Targets
 from fundkit.portfolio import name_weights, sleeve_weights
 
 ALLOWED_TYPES = {"ETF", "MUTUALFUND", "EQUITY"}
-# Matched as whole words, case-insensitively. "short" is deliberately omitted: it would
+# Matched as whole words, case-insensitively, except "ultra", which matches as a word prefix
+# (UltraPro, UltraShort are leveraged; "Ultra Short-Term Bond" false-positives by design). "short" is deliberately omitted: it would
 # false-positive on names like "Short-Term Treasury"; inverse/bear funds are caught by
 # "inverse"/"bear" instead.
 DENIED_KEYWORDS = ("leveraged", "2x", "3x", "ultra", "inverse", "bear", "futures")
@@ -29,8 +30,9 @@ def check_instrument(q: Quote, info: dict, targets: Targets = Targets()) -> list
         violations.append(f"quote type {q.quote_type} not allowed")
     name = f"{info.get('longName') or ''} {info.get('shortName') or ''}".lower()
     for kw in DENIED_KEYWORDS:
-        if re.search(rf"(?<![a-z0-9]){re.escape(kw)}(?![a-z0-9])", name):
-            violations.append(f"denied keyword '{kw}' in name")
+        tail = "" if kw == "ultra" else "(?![a-z0-9])"
+        if re.search(rf"(?<![a-z0-9]){re.escape(kw)}{tail}", name):
+            violations.append(f"denied keyword '{kw}' (leveraged/inverse product) in name")
     return violations
 
 

@@ -139,18 +139,27 @@ def test_quote_type_not_allowed():
 
 def test_leveraged_denied():
     out = check_instrument(quote(), {"longName": "ProShares Leveraged QQQ"})
-    assert out == ["denied keyword 'leveraged' in name"]
+    assert out == ["denied keyword 'leveraged' (leveraged/inverse product) in name"]
+
+
+def test_ultrapro_denied_brief_case():
+    assert "leveraged" in check_instrument(quote(), {"longName": "ProShares UltraPro QQQ"})[0].lower()
 
 
 def test_denied_keyword_case_insensitive_and_short_name():
-    assert check_instrument(quote(), {"longName": "Daily 3X Bull", "shortName": "X"}) == ["denied keyword '3x' in name"]
-    assert check_instrument(quote(), {"longName": "", "shortName": "INVERSE S&P"}) == ["denied keyword 'inverse' in name"]
-    assert check_instrument(quote(), {"longName": "Bear Fund"}) == ["denied keyword 'bear' in name"]
+    assert check_instrument(quote(), {"longName": "Daily 3X Bull", "shortName": "X"}) == ["denied keyword '3x' (leveraged/inverse product) in name"]
+    assert check_instrument(quote(), {"longName": "", "shortName": "INVERSE S&P"}) == ["denied keyword 'inverse' (leveraged/inverse product) in name"]
+    assert check_instrument(quote(), {"longName": "Bear Fund"}) == ["denied keyword 'bear' (leveraged/inverse product) in name"]
 
 
 def test_denied_keywords_match_whole_words_only():
     assert check_instrument(quote(), {"longName": "Vanguard Short-Term Treasury ETF"}) == []
-    assert check_instrument(quote(), {"longName": "Ultrashort Bond Fund"}) == []
+    assert check_instrument(quote(), {"longName": "Vanguard Short-Term Bond ETF"}) == []
+
+
+def test_ultra_matches_as_prefix():
+    assert check_instrument(quote(), {"longName": "ProShares UltraShort QQQ"}) == [
+        "denied keyword 'ultra' (leveraged/inverse product) in name"]
 
 
 def test_clean_instrument_passes():
