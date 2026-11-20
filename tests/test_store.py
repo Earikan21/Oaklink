@@ -101,3 +101,11 @@ def test_performance_round_trips_and_keeps_order(tmp_path):
     s.append_performance(a)
     s.append_performance(b)
     assert s.load_performance() == [a, b]
+
+def test_save_ledger_rewrites_all_rows(tmp_path):
+    s = Store(tmp_path); s.init()
+    a = LedgerRow(id="a", date=date(2026,11,22), action="NOTE", ticker="", amount=0, rationale="x", ips_check="PASS")
+    b = LedgerRow(id="b", date=date(2026,11,29), action="BUY", ticker="VTI", amount=10, rationale="y", ips_check="PASS")
+    s.append_ledger([a, b])
+    s.save_ledger([a, b.model_copy(update={"response": "skipped"})])
+    assert [(r.id, r.response) for r in s.load_ledger()] == [("a", "pending"), ("b", "skipped")]

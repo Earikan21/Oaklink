@@ -110,6 +110,9 @@ class Store:
     def load_ledger(self) -> list[LedgerRow]:
         return _read_table(self.root / LEDGER, LedgerRow)
 
+    def save_ledger(self, rows: list[LedgerRow]) -> None:
+        self._write_table(self.root / LEDGER, LedgerRow, rows)
+
     def append_ledger(self, rows: list[LedgerRow]) -> None:
         self._append_table(self.root / LEDGER, LedgerRow, rows)
 
