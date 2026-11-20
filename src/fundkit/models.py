@@ -57,7 +57,7 @@ class LedgerRow(BaseModel):
     amount: float
     rationale: str
     ips_check: Literal["PASS", "FAIL"]
-    response: Literal["pending", "done", "skipped", "modified"] = "pending"
+    response: Literal["pending", "done", "applied", "skipped", "modified"] = "pending"
     fill_shares: float | None = None
     fill_price: float | None = None
     est_tax: float | None = None

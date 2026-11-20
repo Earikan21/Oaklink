@@ -24,11 +24,8 @@ def reconcile(store: Store, today: date) -> ReconcileResult:
     holdings = store.load_holdings()
     watchlist = store.load_watchlist()
     targets = store.load_targets()
-    watched = {w.ticker for w in watchlist}
 
     def sleeve_for(ticker: str) -> str:
-        if ticker in watched:
-            return "active"
         if ticker == targets.index_etf:
             return "indexed_equity"
         if ticker == targets.bond_etf:
@@ -61,6 +58,7 @@ def reconcile(store: Store, today: date) -> ReconcileResult:
                         f"{row.id}: SELL {row.ticker} short by {row.fill_shares - sold:g} shares "
                         f"(requested {row.fill_shares:g}, held {sold:g})")
                 _adjust_cash(holdings, proceeds, row)
+            ledger[i] = row.model_copy(update={"response": "applied"})
             result.applied.append(row.id)
 
     store.save_holdings(holdings)

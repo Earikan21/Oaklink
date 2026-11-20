@@ -96,3 +96,22 @@ def test_cash_may_go_negative(store_with_cash_3000):
     s.append_ledger([row("big", -1, "BUY", "VTI", response="done", fill_shares=20.0, fill_price=300.0)])
     reconcile(s, today=d(0))
     assert holdings(s)["CASH"].shares == -3000.0
+
+
+def test_reconcile_twice_applies_once(store_with_cash_3000):
+    s = store_with_cash_3000
+    s.append_ledger([row("b1", -3, "BUY", "VTI", amount=1500, response="done", fill_shares=5.0, fill_price=300.0)])
+    assert reconcile(s, today=d(0)).applied == ["b1"]
+    assert s.load_ledger()[0].response == "applied"
+    assert reconcile(s, today=d(0)).applied == []
+    h = holdings(s)
+    assert h["VTI"].shares == 5.0 and h["CASH"].shares == 1500.0
+
+
+def test_index_etf_on_watchlist_is_still_indexed_equity(store_with_cash_3000):
+    s = store_with_cash_3000
+    s.save_watchlist([WatchItem(ticker="VTI", thesis="t", last_valued=None, fair_value=None, upside=None, status="candidate")])
+    s.append_ledger([row("v", -1, "BUY", "VTI", response="done", fill_shares=1.0, fill_price=100.0)])
+    reconcile(s, today=d(0))
+    assert holdings(s)["VTI"].sleeve == "indexed_equity"
+    assert s.load_watchlist()[0].status == "held"
