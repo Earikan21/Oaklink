@@ -125,3 +125,80 @@ def fake_market_3k():
         "VTI": entry("VTI", 300.0, "Vanguard Total Stock Market ETF"),
         "BND": entry("BND", 75.0, "Vanguard Total Bond Market ETF"),
     })
+
+
+# ---------------------------------------------------------------------------
+# ACME valuation fixtures (revenue 100 -> 110 -> 121; columns are NEWEST FIRST)
+# ---------------------------------------------------------------------------
+_ACME_YEARS = ["2025-12-31", "2024-12-31", "2023-12-31"]
+_ACME_REV = [121.0, 110.0, 100.0]
+
+
+def _acme_statements(ebit_margin: float = 0.20, drop: tuple[str, ...] = ()):
+    rev = np.array(_ACME_REV)
+    ebit = rev * ebit_margin
+    tax = np.where(ebit > 0, ebit * 0.21, 0.0)
+    income = pd.DataFrame(
+        {
+            "Total Revenue": rev,
+            "Operating Income": ebit,
+            "Pretax Income": ebit,
+            "Tax Provision": tax,
+            "Diluted EPS": [2.0, 1.8, 1.6],
+            "Interest Expense": [0.0, 0.0, 0.0],
+        },
+        index=_ACME_YEARS,
+    ).T
+    cash = pd.DataFrame(
+        {
+            "Depreciation And Amortization": rev * 0.05,
+            "Capital Expenditure": rev * -0.06,
+            "Change In Working Capital": rev * -0.01,
+            "Free Cash Flow": rev * 0.10,
+        },
+        index=_ACME_YEARS,
+    ).T
+    return income, cash.drop(index=list(drop))
+
+
+def _acme_market(*, beta=1.0, ebit_margin=0.20, ebitda=24.2 + 6.05, drop=()):
+    income, cash = _acme_statements(ebit_margin, drop)
+    info = {
+        "marketCap": 500.0, "sharesOutstanding": 10.0, "totalDebt": 0.0, "totalCash": 20.0,
+        "beta": beta, "trailingEps": 2.0, "totalRevenue": 121.0, "ebitda": ebitda,
+    }
+    data = {
+        "ACME": {
+            "quote": Quote(ticker="ACME", price=50.0, bid=None, ask=None, expense_ratio=None, nav=None,
+                           quote_type="EQUITY", avg_volume=None),
+            "info": info, "income_stmt": income, "cashflow": cash,
+        }
+    }
+    for p, (pe, evr, eve) in {"P1": (20, 4, 14), "P2": (22, 5, 15), "P3": (24, 6, 16)}.items():
+        data[p] = {"info": {"forwardPE": pe, "enterpriseToRevenue": evr, "enterpriseToEbitda": eve}}
+    return FakeMarket(data)
+
+
+@pytest.fixture
+def fake_market_acme():
+    return _acme_market()
+
+
+@pytest.fixture
+def fake_market_acme_neg_ebitda():
+    return _acme_market(ebit_margin=-0.20, ebitda=-5.0)
+
+
+@pytest.fixture
+def fake_market_acme_low_beta():
+    return _acme_market(beta=-0.45)  # ke = 0.045 + (-0.45)(0.055) = 0.02025 = wacc (no debt)
+
+
+@pytest.fixture
+def fake_market_acme_no_beta():
+    return _acme_market(beta=None)
+
+
+@pytest.fixture
+def fake_market_acme_no_nwc():
+    return _acme_market(drop=("Change In Working Capital",))
