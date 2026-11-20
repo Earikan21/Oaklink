@@ -20,7 +20,7 @@ def with_active(three_k_portfolio, ticker, dollars, cash_after):
 
 def test_constants():
     assert ALLOWED_TYPES == {"ETF", "MUTUALFUND", "EQUITY"}
-    assert DENIED_KEYWORDS == ("leveraged", "2x", "3x", "ultra", "inverse", "bear", "futures")
+    assert DENIED_KEYWORDS == ("leveraged", "2x", "3x", "ultra", "inverse", "bear")
 
 
 def test_no_flags_when_on_target(three_k_portfolio):
@@ -169,3 +169,18 @@ def test_clean_instrument_passes():
 def test_multiple_violations_accumulate():
     out = check_instrument(quote(er=0.02, quote_type="FUTURE"), {"longName": "Inverse Fund"})
     assert len(out) == 3
+
+
+def test_managed_futures_strategy_name_not_flagged():
+    assert check_instrument(quote(), {"longName": "iMGP DBi Managed Futures Strategy ETF"}) == []
+
+
+def test_trim_boundary_exactly_at_threshold_not_flagged(three_k_portfolio):
+    holdings, values = with_active(three_k_portfolio, "AAPL", 225.0, 375.0)  # exactly 7.5%
+    assert compliance(holdings, values, Targets(), review=False).trim_flags == []
+    holdings, values = with_active(three_k_portfolio, "AAPL", 180.0, 420.0)  # exactly 6.0%
+    assert compliance(holdings, values, Targets(), review=True).trim_flags == []
+
+
+def test_name_cap_boundary_exactly_5pct_allowed(three_k_portfolio):
+    assert buy_allowed("AAPL", 150.0, *three_k_portfolio, Targets()) == (True, "ok")

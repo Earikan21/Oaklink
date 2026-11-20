@@ -3,7 +3,7 @@ import pytest
 from conftest import make_holding
 from fundkit.models import Targets
 from fundkit.portfolio import (
-    Proposal, name_weights, rebalance_proposals, sleeve_weights, value_holdings, whole_share_target,
+    Proposal, name_weights, outside_band, rebalance_proposals, sleeve_weights, value_holdings, whole_share_target,
 )
 
 
@@ -105,3 +105,81 @@ def test_rebalance_empty_portfolio_proposes_nothing():
 def test_proposal_model_defaults():
     p = Proposal(action="BUY", ticker="BND", dollars=75.0, reason="x")
     assert p.shares is None and p.est_tax is None
+
+
+PRICES = {"VTI": 300.0, "BND": 75.0}
+
+
+def test_outside_band_helper():
+    assert outside_band(0.56, 0.50, 0.05)
+    assert not outside_band(0.55, 0.50, 0.05)  # exactly on the edge
+    assert outside_band(0.44, 0.50, 0.05)
+
+
+def test_rebalance_sell_capped_so_indexed_stays_at_least_active():
+    holdings, values = _portfolio(900.0, 900.0, 390.0)
+    holdings.append(make_holding("ACME", "active", 1))
+    values["ACME"] = 810.0  # stocks 1710/3000 = 57%
+    props = rebalance_proposals(holdings, values, Targets(), PRICES, review=False)
+    assert len(props) == 1
+    assert props[0].action == "SELL" and props[0].ticker == "VTI"
+    assert props[0].dollars == pytest.approx(90.0)
+    assert "capped" in props[0].reason
+
+
+def test_rebalance_sell_not_capped_has_plain_reason():
+    holdings, values = _portfolio(1710.0, 900.0, 390.0)
+    props = rebalance_proposals(holdings, values, Targets(), PRICES, review=False)
+    assert "capped" not in props[0].reason
+
+
+def test_rebalance_no_sell_when_indexed_already_trails_active():
+    holdings, values = _portfolio(800.0, 900.0, 390.0)
+    holdings.append(make_holding("ACME", "active", 1))
+    values["ACME"] = 910.0  # stocks 57%, indexed < active
+    assert rebalance_proposals(holdings, values, Targets(), PRICES, review=False) == []
+
+
+def test_rebalance_refuses_incomplete_valuation():
+    holdings, values = _portfolio(1710.0, 900.0, 390.0)
+    assert rebalance_proposals(holdings, values, Targets(), PRICES, review=False, unpriced=["ZZZZ"]) == []
+
+
+def test_rebalance_missing_price_raises_value_error():
+    holdings, values = _portfolio(1710.0, 900.0, 390.0)
+    with pytest.raises(ValueError, match="no price for VTI"):
+        rebalance_proposals(holdings, values, Targets(), {"BND": 75.0}, review=False)
+    holdings, values = _portfolio(1500.0, 720.0, 780.0)
+    with pytest.raises(ValueError, match="no price for BND"):
+        rebalance_proposals(holdings, values, Targets(), {"VTI": 300.0}, review=False)
+
+
+def test_rebalance_full_correction_when_any_sleeve_out_of_band():
+    holdings, values = _portfolio(1620.0, 1020.0, 360.0)  # 54 / 34 / 12: cash is out, stocks/bonds in band
+    props = {p.ticker: p for p in rebalance_proposals(holdings, values, Targets(), PRICES, review=False)}
+    assert props["VTI"].action == "SELL" and props["VTI"].dollars == pytest.approx(120.0)
+    assert props["BND"].action == "SELL" and props["BND"].shares == 2  # $120 / $75 = 1.6 -> 2
+    assert props["BND"].dollars == pytest.approx(150.0)
+
+
+def test_rebalance_buys_index_etf_when_stocks_under():
+    holdings, values = _portfolio(1200.0, 900.0, 900.0)  # 40 / 30 / 30
+    props = rebalance_proposals(holdings, values, Targets(), PRICES, review=False)
+    assert [(p.action, p.ticker, p.shares) for p in props] == [("BUY", "VTI", None)]
+    assert props[0].dollars == pytest.approx(300.0)
+    assert props[0].reason == "rebalance stocks 40.0% → 50%"
+
+
+def test_rebalance_sells_bonds_capped_at_shares_held():
+    holdings, values = _portfolio(900.0, 1500.0, 600.0)
+    holdings = [h if h.ticker != "BND" else make_holding("BND", "bonds", 2) for h in holdings]  # stale: 2 sh held
+    props = {p.ticker: p for p in rebalance_proposals(holdings, values, Targets(), PRICES, review=False)}
+    assert props["BND"].action == "SELL" and props["BND"].shares == 2
+
+
+def test_rebalance_bond_one_share_tolerance_11_held_at_75_30():
+    holdings = [make_holding("VTI", "indexed_equity", 5), make_holding("BND", "bonds", 11),
+                make_holding("CASH", "cash", 671.7)]
+    values = {"VTI": 1500.0, "BND": 11 * 75.3, "CASH": 671.7}  # bonds 27.6%: gap $71.7 = 1 share
+    props = rebalance_proposals(holdings, values, Targets(band=0.01), {"VTI": 300.0, "BND": 75.3}, review=False)
+    assert props == []

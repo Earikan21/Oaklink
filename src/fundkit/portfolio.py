@@ -8,6 +8,7 @@ from fundkit.models import Holding, Sleeve, Targets
 
 SLEEVES: tuple[Sleeve, ...] = ("indexed_equity", "active", "bonds", "cash")
 CASH_TICKER = "CASH"
+EPS = 1e-9
 
 
 class Proposal(BaseModel):
@@ -71,36 +72,60 @@ def whole_share_target(dollars: float, price: float) -> int:
     return max(0, round(dollars / price))
 
 
-def rebalance_proposals(holdings: list[Holding], values: dict[str, float], targets: Targets,
-                        prices: dict[str, float], review: bool) -> list[Proposal]:
-    """Propose trades only for sleeves outside the band.
+def outside_band(weight: float, target: float, band: float) -> bool:
+    """True when `weight` is more than `band` (absolute weight points) from `target`."""
+    return abs(weight - target) > band + EPS
 
-    Stocks are corrected via the index ETF (active names are never touched); bonds via whole
-    shares of the bond ETF, ignoring gaps of one share or less; cash is the residual.
+
+def rebalance_proposals(holdings: list[Holding], values: dict[str, float], targets: Targets,
+                        prices: dict[str, float], review: bool, unpriced: list[str] = []) -> list[Proposal]:
+    """If any sleeve is outside the band, bring stocks and bonds fully back to target.
+
+    Cash is the residual and gets no proposal. Stocks are corrected via the index ETF only
+    (active names are never touched; a SELL is capped so indexed equity stays >= active).
+    Bonds are corrected in whole shares of the bond ETF; gaps of one share or less are ignored.
+    Returns [] on an incomplete valuation (`unpriced` non-empty).
     `review` is accepted for a uniform call signature; rebalancing does not depend on it.
     """
     total = sum(values.values())
-    if total == 0:
+    if total == 0 or unpriced:
         return []
     w = sleeve_weights(holdings, values)
     stocks = w["indexed_equity"] + w["active"]
+    if not (outside_band(stocks, targets.stocks, targets.band)
+            or outside_band(w["bonds"], targets.bonds, targets.band)
+            or outside_band(w["cash"], targets.cash, targets.band)):
+        return []
     props: list[Proposal] = []
 
-    if abs(stocks - targets.stocks) > targets.band + 1e-9:
-        gap = (targets.stocks - stocks) * total
-        props.append(Proposal(
-            action="BUY" if gap > 0 else "SELL", ticker=targets.index_etf, dollars=abs(gap),
-            reason=f"rebalance stocks {stocks * 100:.1f}% → {targets.stocks * 100:.0f}%"))
+    gap = (targets.stocks - stocks) * total
+    if abs(gap) > 1.0:
+        ticker = targets.index_etf
+        if ticker not in prices:
+            raise ValueError(f"no price for {ticker}")
+        dollars = abs(gap)
+        reason = f"rebalance stocks {stocks * 100:.1f}% → {targets.stocks * 100:.0f}%"
+        if gap < 0:
+            headroom = max(0.0, (w["indexed_equity"] - w["active"]) * total)
+            limit = min(values.get(ticker, 0.0), headroom)
+            if dollars > limit:
+                dollars = limit
+                reason += " (capped: indexed ≥ active)"
+        if dollars > 1.0:
+            props.append(Proposal(action="BUY" if gap > 0 else "SELL", ticker=ticker, dollars=dollars,
+                                  reason=reason))
 
-    if abs(w["bonds"] - targets.bonds) > targets.band + 1e-9:
-        gap = (targets.bonds - w["bonds"]) * total
-        price = prices[targets.bond_etf]
+    gap = (targets.bonds - w["bonds"]) * total
+    if abs(gap) > 1.0:
+        ticker = targets.bond_etf
+        if ticker not in prices:
+            raise ValueError(f"no price for {ticker}")
+        price = prices[ticker]
         shares = whole_share_target(abs(gap), price)
+        if gap < 0:
+            shares = min(shares, int(sum(h.shares for h in holdings if h.ticker == ticker)))
         if shares > 1:
-            if gap < 0:
-                held = sum(h.shares for h in holdings if h.ticker == targets.bond_etf)
-                shares = min(shares, int(held))
             props.append(Proposal(
-                action="BUY" if gap > 0 else "SELL", ticker=targets.bond_etf, dollars=shares * price,
-                shares=shares, reason=f"rebalance bonds {w['bonds'] * 100:.1f}% → {targets.bonds * 100:.0f}%"))
+                action="BUY" if gap > 0 else "SELL", ticker=ticker, dollars=shares * price, shares=shares,
+                reason=f"rebalance bonds {w['bonds'] * 100:.1f}% → {targets.bonds * 100:.0f}%"))
     return props
