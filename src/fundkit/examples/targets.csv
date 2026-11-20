@@ -1,0 +1,17 @@
+key,value
+stocks,0.5
+bonds,0.3
+cash,0.2
+band,0.05
+active_ceiling,0.3
+name_cap,0.05
+trim_threshold,0.075
+review_trim,0.06
+fee_cap,0.009
+min_upside,0.25
+max_corr,0.8
+max_spread,0.005
+reval_move,0.15
+review_every,6
+index_etf,VTI
+bond_etf,BND
