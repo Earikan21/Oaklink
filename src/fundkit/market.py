@@ -41,11 +41,11 @@ _SCREEN_FIELDS: dict[str, tuple[str, str]] = {
     "marketcap_gt": ("lastclosemarketcap.lasttwelvemonths", "gt"),
     "pe_lt": ("peratio.lasttwelvemonths", "lt"),
     "de_lt": ("totaldebtequity.lasttwelvemonths", "lt"),
-    # yfinance exposes no 5y EPS CAGR screener field; trailing-twelve-month growth is the closest.
+    # Substitution: yfinance has no 5y EPS CAGR screener field, so this uses
+    # trailing-twelve-month EPS growth as the closest available proxy.
     "eps_growth_5y_gt": ("epsgrowth.lasttwelvemonths", "gt"),
 }
 _DEFAULT_SCREEN_LIMIT = 25
-_PERCENT_CUTOFF = 0.02
 
 
 def build_equity_query(query: dict):
@@ -64,14 +64,10 @@ def build_equity_query(query: dict):
     return q, int(query.get("limit", _DEFAULT_SCREEN_LIMIT))
 
 
-def _normalise_expense_ratio(raw: float | None) -> float | None:
-    # yfinance reports netExpenseRatio as a percent for some funds (0.03 means 0.03%)
-    # and as a fraction for others (0.0009 means 0.09%). The two ranges overlap, so
-    # use a heuristic cutoff: anything >= 0.02 is a percent and is divided by 100
-    # (a fraction that large would be a >=2% fee, above anything in our universe).
-    if raw is None:
-        return None
-    return raw / 100 if raw >= _PERCENT_CUTOFF else raw
+def _expense_ratio_fraction(raw: float | None) -> float | None:
+    # yfinance quotes netExpenseRatio in percent (VTI: 0.03 means 0.03%; a 0.9% fund: 0.9).
+    # Quote.expense_ratio is a fraction, so always divide by 100.
+    return None if raw is None else raw / 100
 
 
 class YFMarket:
@@ -120,7 +116,7 @@ class YFMarket:
             price=float(price),
             bid=info.get("bid"),
             ask=info.get("ask"),
-            expense_ratio=_normalise_expense_ratio(info.get("netExpenseRatio")),
+            expense_ratio=_expense_ratio_fraction(info.get("netExpenseRatio")),
             nav=info.get("navPrice"),
             quote_type=info.get("quoteType") or "",
             avg_volume=info.get("averageVolume"),

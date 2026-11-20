@@ -83,7 +83,7 @@ def test_quote_fills_from_info(tmp_path, monkeypatch):
     assert (q.bid, q.ask, q.nav, q.quote_type, q.avg_volume) == (9.9, 10.1, 10.0, "ETF", 5e6)
 
 
-@pytest.mark.parametrize("raw,expected", [(0.03, 0.0003), (0.0009, 0.0009)])
+@pytest.mark.parametrize("raw,expected", [(0.03, 0.0003), (0.9, 0.009)])
 def test_expense_ratio_normalised(tmp_path, monkeypatch, raw, expected):
     _patch(monkeypatch, price=10.0, info={"netExpenseRatio": raw})
     assert YFMarket(tmp_path).quote("X").expense_ratio == pytest.approx(expected)
