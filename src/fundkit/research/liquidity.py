@@ -8,8 +8,6 @@ from fundkit.market import MarketData
 
 PERIOD = "3mo"
 MIN_ROWS = 3
-# (minimum ADTV in dollars, grade), checked in order; Very High is strictly above its bound.
-GRADE_TABLE = ((500e6, "High"), (50e6, "Moderate"), (5e6, "Low"), (0.5e6, "Very Low"))
 
 
 class Liquidity(BaseModel):
