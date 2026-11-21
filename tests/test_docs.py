@@ -34,3 +34,7 @@ def test_prompt_and_readme_require_iso_dates_and_plain_numbers():
 def test_prompt_maps_schema_and_validation_errors_to_sheet_formatting():
     assert "`error: schema mismatch`" in PROMPT and "validation" in PROMPT
     assert "Do not retry blindly" in PROMPT
+
+
+def test_readme_spread_rule_is_strict():
+    assert "spread < 0.5%" in README and "spread at most 0.5%" not in README

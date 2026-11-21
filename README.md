@@ -51,8 +51,8 @@ a badly formatted value exits 1 with a pydantic `validation error`. Fix the Shee
 - Sleeves: stocks 50% (`stocks`), bonds 30% (`bonds`), cash 20% (`cash`); flag a sleeve more than 5 pts off (`band` 0.05).
 - Active sleeve is a ceiling of 30% (`active_ceiling`), not a target; funded by selling the index ETF.
 - Per-name cap 5% at purchase (`name_cap`); trim flag at 7.5% (`trim_threshold`), or above 6% at a review (`review_trim`).
-- Fund expense ratio must be under 0.9% (`fee_cap`).
-- Buys need at least 25% upside (`min_upside`), correlation at most 0.8 (`max_corr`), spread at most 0.5% (`max_spread`).
+- Fund expense ratio must be under 0.9% (`fee_cap`); a fund with no published expense ratio fails. Index/bond ETF buys and held funds are checked every run (memo section 2).
+- Buys need at least 25% upside (`min_upside`), correlation at most 0.8 (`max_corr`), bid-ask spread < 0.5% (`max_spread`; exactly 0.5% fails).
 - Revalue a held name after earnings or a 15% price move (`reval_move`).
 - Review run every 6th run (`review_every`); force with `--review`. Index ETF `VTI`, bond ETF `BND`.
 
