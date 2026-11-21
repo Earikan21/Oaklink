@@ -73,7 +73,9 @@ def active_vs_index(ledger: list[LedgerRow], holdings: list[Holding], values: di
         fill_ts = pd.Timestamp(row.date)
         if fill_ts < index_close.index[0]:
             continue
-        counterfactual = row.fill_shares * row.fill_price * index_close.iloc[-1] / index_close[fill_ts]
+        # Fill after the last available close: no index move to compare against (ratio 1.0).
+        ratio = 1.0 if fill_ts >= index_close.index[-1] else index_close.iloc[-1] / index_close.asof(fill_ts)
+        counterfactual = row.fill_shares * row.fill_price * ratio
         total += row.fill_shares * price - counterfactual
         counted = True
     return total if counted else None
@@ -96,7 +98,7 @@ def snapshot(store: Store, market: MarketData, targets: Targets, today: date, in
     """Point-in-time Snapshot. Does not append it to the store (the caller does)."""
     holdings = store.load_holdings()
     ledger = store.load_ledger()
-    values, _unpriced = value_holdings(holdings, market)
+    values, unpriced = value_holdings(holdings, market)
     sleeve_of: dict[str, str] = {}
     for h in holdings:
         sleeve_of.setdefault(h.ticker, h.sleeve)
@@ -111,4 +113,5 @@ def snapshot(store: Store, market: MarketData, targets: Targets, today: date, in
         bench_total=benchmark_value(inception_value, inception, today, market, targets),
         active_vs_index=active_vs_index(ledger, holdings, values, market, targets),
         turnover_qtd=turnover_qtd(ledger, today, total),
+        unpriced=";".join(unpriced),
     )

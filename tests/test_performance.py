@@ -200,3 +200,41 @@ def test_benchmark_uses_full_history_beyond_two_years():
     })
     got = benchmark_value(3000.0, d(-900), d(0), m, Targets())
     assert 3000.0 < got < 3000.0 * (0.8 + 0.2 * G1 ** 900)
+
+
+def test_active_vs_index_fill_after_last_index_close(fake_market_pick_up_20_etf_up_10):
+    # index history ends d(0); a fill dated one day later has no close yet -> ratio 1.0
+    row = _buy("1", "ACME", d(1), 10, 50.0)
+    got = active_vs_index([row], [make_holding("ACME", "active", 10)], {"ACME": 600.0},
+                          fake_market_pick_up_20_etf_up_10, Targets())
+    assert got == pytest.approx(10 * 60.0 - 500.0)  # counterfactual == dollars
+
+
+def test_benchmark_saturday_start_uses_prior_friday_close():
+    # Fri 2026-11-20 closes at 100, Mon 11-23 at 200; start Saturday 11-21, end Sunday 11-22.
+    idx = pd.to_datetime(["2026-11-19", "2026-11-20", "2026-11-23"])
+    vti = pd.DataFrame({"Close": [90.0, 100.0, 200.0]}, index=idx)
+    bnd = pd.DataFrame({"Close": [50.0, 50.0, 50.0]}, index=idx)
+    m = _etf_market(vti, bnd)
+    # initial units from Friday's 100: 500/100 = 5 shares. One day later (Sunday) VTI still 100.
+    got = benchmark_value(1000.0, date(2026, 11, 21), date(2026, 11, 22), m, Targets())
+    assert got == pytest.approx(5.0 * 100.0 + 300.0 + 200.0 * G1)
+    # after Monday's jump: those same 5 units are worth 200 each
+    got2 = benchmark_value(1000.0, date(2026, 11, 21), date(2026, 11, 23), m, Targets())
+    assert got2 == pytest.approx(5.0 * 200.0 + 300.0 + 200.0 * G1 ** 2)
+
+
+def test_snapshot_reports_unpriced_and_excludes_from_total(tmp_path, fake_market_flat):
+    from fundkit.store import Store
+    store = Store(tmp_path)
+    store.init()
+    store.save_holdings([make_holding("VTI", "indexed_equity", 5, 100.0),
+                         make_holding("GHOST", "active", 10, 50.0),
+                         make_holding("CASH", "cash", 600.0)])
+    snap = snapshot(store, fake_market_flat, Targets(), d(0), d(-100), 3000.0)
+    assert snap.unpriced == "GHOST"
+    assert snap.total == pytest.approx(500.0 + 600.0)
+    assert snap.active == 0.0
+    # round-trips through the CSV store
+    store.append_performance(snap)
+    assert store.load_performance()[0].unpriced == "GHOST"

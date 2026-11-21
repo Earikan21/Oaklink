@@ -73,6 +73,7 @@ class Snapshot(BaseModel):
     bench_total: float
     active_vs_index: float | None
     turnover_qtd: float
+    unpriced: str = ""  # ';'-joined tickers excluded from total because they had no price
 
 
 class Quote(BaseModel):
