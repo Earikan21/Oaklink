@@ -9,6 +9,7 @@ from typing import Annotated, Optional
 import typer
 
 from fundkit.fake_market import FakeMarket, packaged_example
+from fundkit.models import Holding
 from fundkit.market import MarketData, MarketUnavailable, YFMarket
 from fundkit.store import Store
 
@@ -56,11 +57,22 @@ def _errors():
 
 
 @app.command()
-def init(data: DataOpt = None) -> None:
+def init(
+    data: DataOpt = None,
+    cash: Annotated[Optional[float], typer.Option("--cash", help="Seed a CASH holding (only into an empty book).")] = None,
+) -> None:
     """Create the data tables (existing files are never overwritten)."""
     d = _data_dir(data)
-    Store(d).init()
+    store = Store(d)
+    store.init()
     typer.echo(str(d))
+    if cash is not None and cash > 0:
+        if store.load_holdings():
+            typer.echo("holdings already exist; --cash ignored")
+        else:
+            store.save_holdings([Holding(ticker="CASH", sleeve="cash", shares=cash, cost_basis=1.0,
+                                         lot_date=date.today())])
+            typer.echo(f"seeded ${cash:,.0f} cash")
 
 
 @app.command("reconcile")

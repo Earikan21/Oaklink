@@ -139,3 +139,18 @@ def test_from_json_round_trips_packaged_example():
     assert (h["Open"] == h["High"]).all() and (h["Low"] == h["Close"]).all()
     assert m.info("VTI")["netExpenseRatio"] == 0.03
     assert m.screen({}) == []
+
+
+def test_init_cash_then_run_proposes_first_run_buys(tmp_path, fake_env):
+    d = tmp_path / "d"
+    r = runner.invoke(app, ["init", "--data", str(d), "--cash", "3000"])
+    assert r.exit_code == 0 and "seeded $3,000 cash" in r.stdout
+    out = runner.invoke(app, ["run", "--dry-run", "--review", "--today", TODAY, "--data", str(d)]).stdout
+    assert "BUY — VTI — $1,500" in out and "BUY — BND — $900 (12 sh)" in out
+
+
+def test_init_cash_does_not_touch_existing_holdings(data_dir):
+    before = Store(data_dir).load_holdings()
+    r = runner.invoke(app, ["init", "--data", str(data_dir), "--cash", "9999"])
+    assert r.exit_code == 0 and "ignored" in r.stdout
+    assert Store(data_dir).load_holdings() == before
