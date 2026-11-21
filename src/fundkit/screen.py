@@ -1,11 +1,12 @@
 """Graham-style universe screen, quality filter, buy gate, and watchlist refresh."""
+import math
 from datetime import date
 
 import pandas as pd
 from pydantic import BaseModel
 
 from fundkit.ips import buy_allowed, check_instrument
-from fundkit.market import MarketData, MarketUnavailable
+from fundkit.market import MarketData
 from fundkit.models import Holding, Targets, WatchItem
 from fundkit.research import liquidity, stage
 from fundkit.research.correlation import max_corr_with
@@ -32,26 +33,37 @@ def universe(market: MarketData) -> list[str]:
     return market.screen(UNIVERSE_QUERY)
 
 
+def _finite(x) -> bool:
+    try:
+        return math.isfinite(float(x))
+    except (TypeError, ValueError):
+        return False
+
+
 def quality_ok(ticker: str, market: MarketData) -> tuple[bool, list[str]]:
     reasons: list[str] = []
-    fcf = _latest_fcf(market.cashflow(ticker))
-    if fcf is None:
+    row = _fcf_row(market.cashflow(ticker))
+    if row is None or not len(row):
         reasons.append("no FCF data")
-    elif fcf <= 0:
+    elif not _finite(row.iloc[-1]):
+        reasons.append("quality data unavailable")
+    elif float(row.iloc[-1]) <= 0:
         reasons.append("FCF <= 0")
     raw_de = market.info(ticker).get("debtToEquity")
     if raw_de is None:
         reasons.append("no debt/equity data")
-    elif raw_de / 100 >= 1.0:
-        reasons.append(f"debt/equity {raw_de / 100:.2f} >= 1.0")
+    elif not _finite(raw_de):
+        if "quality data unavailable" not in reasons:
+            reasons.append("quality data unavailable")
+    elif float(raw_de) / 100 >= 1.0:
+        reasons.append(f"debt/equity {float(raw_de) / 100:.2f} >= 1.0")
     return (not reasons, reasons)
 
 
-def _latest_fcf(cashflow: pd.DataFrame) -> float | None:
+def _fcf_row(cashflow: pd.DataFrame) -> pd.Series | None:
     if "Free Cash Flow" not in cashflow.index:
         return None
-    row = cashflow.loc["Free Cash Flow"].dropna().sort_index()
-    return float(row.iloc[-1]) if len(row) else None
+    return cashflow.loc["Free Cash Flow"].sort_index()
 
 
 def peers_for(ticker: str, market: MarketData) -> list[str]:
@@ -75,7 +87,10 @@ def gate(ticker: str, dollars: float, holdings: list[Holding], values: dict[str,
         valuation = value_company(ticker, market, peers)
     except ValueError:
         reasons.append("valuation impossible")
-    except MarketUnavailable:
+    except Exception:
+        reasons.append("valuation unavailable")
+    if valuation is not None and not _finite(valuation.upside):
+        valuation = None
         reasons.append("valuation unavailable")
     upside = valuation.upside if valuation else None
     if upside is not None and upside < targets.min_upside:
@@ -88,7 +103,7 @@ def gate(ticker: str, dollars: float, holdings: list[Holding], values: dict[str,
         stage_n = int(stage.classify(ticker, market))
     except ValueError:
         reasons.append("insufficient history for stage")
-    except MarketUnavailable:
+    except Exception:
         reasons.append("stage unavailable")
     if stage_n == 4:
         reasons.append("stage 4 downtrend")
@@ -96,16 +111,22 @@ def gate(ticker: str, dollars: float, holdings: list[Holding], values: dict[str,
     corr: float | None = None
     try:
         corr = max_corr_with(ticker, held_active, market)
-    except (ValueError, MarketUnavailable):
+        if not _finite(corr):
+            corr = None
+    except Exception:
+        corr = None
+    if corr is None:
         reasons.append("correlation unavailable")
-    if corr is not None and corr > targets.max_corr:
+    elif corr > targets.max_corr:
         reasons.append(f"correlation {corr:.2f} > {targets.max_corr:.2f}")
 
     spread: float | None = None
     try:
         spread = liquidity.snapshot(ticker, market).spread_pct
-    except (ValueError, MarketUnavailable):
-        pass
+        if spread is not None and not _finite(spread):
+            spread = None
+    except Exception:
+        spread = None
     if spread is None:
         reasons.append("spread unavailable")
     elif round(spread, SPREAD_DECIMALS) >= targets.max_spread:
@@ -114,7 +135,7 @@ def gate(ticker: str, dollars: float, holdings: list[Holding], values: dict[str,
     try:
         _, quality_reasons = quality_ok(ticker, market)
         reasons.extend(quality_reasons)
-    except MarketUnavailable:
+    except Exception:
         reasons.append("quality data unavailable")
 
     allowed, why = buy_allowed(ticker, dollars, holdings, values, targets)
@@ -123,7 +144,7 @@ def gate(ticker: str, dollars: float, holdings: list[Holding], values: dict[str,
 
     try:
         reasons.extend(check_instrument(market.quote(ticker), market.info(ticker), targets))
-    except MarketUnavailable:
+    except Exception:
         reasons.append("instrument data unavailable")
 
     return GateResult(passed=not reasons, upside=upside, stage=stage_n, max_corr=corr, spread_pct=spread,
@@ -133,6 +154,8 @@ def gate(ticker: str, dollars: float, holdings: list[Holding], values: dict[str,
 def _needs_revalue(item: WatchItem, market: MarketData, targets: Targets, today: date) -> bool:
     if item.last_valued is None or item.fair_value is None or item.upside is None:
         return True
+    if item.fair_value <= 0 or 1 + item.upside <= 0:
+        return True  # cannot derive a price at valuation; revalue instead of dividing
     if (today - item.last_valued).days > STALE_DAYS:
         return True
     price_then = item.fair_value / (1 + item.upside)
@@ -147,7 +170,7 @@ def refresh_watchlist(watch: list[WatchItem], market: MarketData, targets: Targe
                 out.append(item.model_copy())
                 continue
             v = value_company(item.ticker, market, peers_for(item.ticker, market))
-        except (ValueError, MarketUnavailable):
+        except Exception:
             out.append(item.model_copy())  # stale date stays visible in the memo
             continue
         status = item.status

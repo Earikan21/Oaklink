@@ -5,6 +5,8 @@ import pandas as pd
 import pytest
 
 from conftest import FakeMarket, _acme_market, make_holding, make_history
+import fundkit.screen as screen_mod
+from fundkit.market import MarketUnavailable
 from fundkit.models import Quote, Targets, WatchItem
 from fundkit.screen import (UNIVERSE_QUERY, GateResult, gate, peers_for, quality_ok,
                             refresh_watchlist, universe)
@@ -193,6 +195,7 @@ def test_gate_valuation_impossible():
     env["market"].data["ACME"]["info"] = {**env["market"].data["ACME"]["info"], "marketCap": None}
     g = gate(**env)
     assert "valuation impossible" in g.reasons and g.upside is None and g.valuation is None and not g.passed
+    assert g.stage == 2 and g.spread_pct is not None  # later checks still ran
 
 
 def test_gate_insufficient_history_for_stage():
@@ -200,6 +203,9 @@ def test_gate_insufficient_history_for_stage():
     env["market"].data["ACME"]["history"] = env["market"].data["ACME"]["history"].iloc[-100:]
     g = gate(**env)
     assert "insufficient history for stage" in g.reasons and g.stage is None
+    assert g.upside is not None and g.spread_pct is not None  # later checks still ran
+    g2 = gate(**{**env, "dollars": 900.0})
+    assert "insufficient history for stage" in g2.reasons and any("per-name cap" in r for r in g2.reasons)
 
 
 def test_gate_spread_missing_fails_closed():
@@ -278,3 +284,117 @@ def test_refresh_does_not_mutate_inputs():
     item = _watch(last=None, fair=None, upside=None)
     out = refresh_watchlist([item], m, TARGETS, TODAY)
     assert item.last_valued is None and out[0] is not item
+
+
+# ---------------------------------------------------------------- non-finite / unavailable branches
+def test_quality_nan_debt_to_equity_is_unavailable():
+    assert quality_ok("X", _q_market(10.0, float("nan"))) == (False, ["quality data unavailable"])
+
+
+def test_quality_nan_fcf_is_unavailable():
+    assert quality_ok("X", _q_market(float("nan"), 50.0)) == (False, ["quality data unavailable"])
+
+
+def test_gate_nan_debt_to_equity_fails():
+    g = gate(**gate_env(info_extra={"debtToEquity": float("nan")}))
+    assert not g.passed and g.reasons == ["quality data unavailable"]
+
+
+def test_gate_nan_spread_fails(monkeypatch):
+    liq = screen_mod.liquidity.Liquidity(spread_pct=float("nan"), adtv_dollars=1e8, amihud_e9=0.0,
+                                         impact_bps_1pct_adv=1.0, grade="High")
+    monkeypatch.setattr(screen_mod.liquidity, "snapshot", lambda t, m: liq)
+    g = gate(**gate_env())
+    assert g.reasons == ["spread unavailable"] and g.spread_pct is None
+
+
+def test_gate_nan_correlation_fails(monkeypatch):
+    monkeypatch.setattr(screen_mod, "max_corr_with", lambda t, h, m: float("nan"))
+    g = gate(**gate_env())
+    assert g.reasons == ["correlation unavailable"] and g.max_corr is None
+
+
+def test_gate_valuation_unavailable_when_info_raises():
+    env = gate_env()
+    class NoInfo(FakeMarket):
+        def info(self, ticker):
+            if ticker == "ACME" and self.broken:
+                raise MarketUnavailable(ticker)
+            return super().info(ticker)
+    m = NoInfo(env["market"].data); m.broken = True
+    g = gate(**{**env, "market": m})
+    assert "valuation unavailable" in g.reasons and "instrument data unavailable" in g.reasons
+    assert g.valuation is None and g.stage == 2 and g.spread_pct is not None  # later checks ran
+
+
+def test_gate_stage_unavailable_when_history_raises(monkeypatch):
+    def boom(t, m):
+        raise MarketUnavailable(t)
+    monkeypatch.setattr(screen_mod.stage, "classify", boom)
+    g = gate(**gate_env())
+    assert g.reasons == ["stage unavailable"] and g.stage is None
+
+
+def test_gate_correlation_unavailable_on_insufficient_overlap():
+    env = gate_env()
+    env["market"].data["HELD"]["history"] = env["market"].data["HELD"]["history"].iloc[-30:]
+    g = gate(**env)
+    assert g.reasons == ["correlation unavailable"] and g.max_corr is None
+
+
+def test_gate_quality_data_unavailable_when_cashflow_raises():
+    env = gate_env()
+    class NoCash(FakeMarket):
+        def cashflow(self, ticker):
+            raise RuntimeError("boom")
+    g = gate(**{**env, "market": NoCash(env["market"].data)})
+    assert "quality data unavailable" in g.reasons and g.valuation is None or "quality data unavailable" in g.reasons
+    assert g.stage == 2  # later/earlier checks unaffected
+
+
+def test_gate_instrument_data_unavailable_when_quote_raises():
+    env = gate_env()
+    class Flaky(FakeMarket):
+        calls = 0
+        def quote(self, ticker):
+            raise RuntimeError("boom")
+    g = gate(**{**env, "market": Flaky(env["market"].data)})
+    assert "instrument data unavailable" in g.reasons and "spread unavailable" in g.reasons
+
+
+def test_gate_arbitrary_exception_in_stage_does_not_abort(monkeypatch):
+    monkeypatch.setattr(screen_mod.stage, "classify", lambda t, m: 1 / 0)
+    g = gate(**gate_env(dollars=900.0))
+    assert "stage unavailable" in g.reasons and any("per-name cap" in r for r in g.reasons)
+
+
+def test_gate_upside_exactly_min_passes(monkeypatch):
+    env = gate_env()
+    real = screen_mod.value_company(*("ACME", env["market"], PEERS))
+    monkeypatch.setattr(screen_mod, "value_company", lambda t, m, p: real.model_copy(update={"upside": 0.25}))
+    g = gate(**env)
+    assert g.passed and g.upside == 0.25
+
+
+def test_gate_correlation_exactly_max_passes(monkeypatch):
+    monkeypatch.setattr(screen_mod, "max_corr_with", lambda t, h, m: 0.80)
+    g = gate(**gate_env())
+    assert g.passed and g.max_corr == 0.80
+
+
+def test_refresh_upside_minus_one_revalues_without_error():
+    m = _refresh_market(33.29)
+    [out] = refresh_watchlist([_watch(fair=40.0, upside=-1.0)], m, TARGETS, TODAY)
+    assert out.last_valued == TODAY and out.fair_value != 40.0
+
+
+def test_refresh_fair_value_none_with_last_valued_set_revalues():
+    m = _refresh_market(33.29)
+    [out] = refresh_watchlist([_watch(fair=None, upside=0.25)], m, TARGETS, TODAY)
+    assert out.fair_value is not None and out.last_valued == TODAY
+
+
+def test_refresh_nonpositive_fair_value_revalues():
+    m = _refresh_market(33.29)
+    [out] = refresh_watchlist([_watch(fair=0.0, upside=0.25)], m, TARGETS, TODAY)
+    assert out.last_valued == TODAY
