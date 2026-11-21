@@ -523,3 +523,37 @@ def test_compliance_in_action_set_carries_fund_flags(tmp_path):
     m.data["BND"]["quote"] = _q("BND", 75.0, expense_ratio=0.0095)
     a = build_actions(s, m, Targets(), TODAY, review=False)
     assert a.compliance.fund_flags == ["BND: expense ratio 0.95% >= 0.90% cap"]
+
+
+# ---------------------------------------------------------------- I4: unresolved IPS breach note
+BREACH_NOTE = "IPS breach unresolved (active ceiling / indexed<active): decide manually — candidates: "
+
+
+def test_unresolved_active_ceiling_breach_note_lists_names_by_weight(tmp_path):
+    # total 7_300: VTI 1400 / A1..A8 450 down to 275 (2900, 39.7% > 30%; each < 7.5%, so no trim) / BND 3000
+    names = [f"A{i}" for i in range(1, 9)]
+    holdings = ([_lot("VTI", "indexed_equity", 14, 90.0)]
+                + [_lot(t, "active", 9 - i * 0.5, 40.0) for i, t in enumerate(names)]
+                + [_lot("BND", "bonds", 40, 75.0), _lot("CASH", "cash", 0.0)])
+    s = _store(tmp_path, holdings)
+    m = _market({"VTI": 100.0, "BND": 75.0, **{t: 50.0 for t in names}})
+    a = build_actions(s, m, Targets(), TODAY, review=False)
+    assert a.compliance.active_ceiling_flag and a.compliance.indexed_lt_active
+    assert a.sells == []
+    assert BREACH_NOTE + ", ".join(names) in a.notes
+
+
+def test_breach_resolved_by_thesis_sell_has_no_note(tmp_path):
+    # VTI 1400, HELD 1600 (active > indexed); HELD sold at fair value -> resolved
+    s = _store(tmp_path, [_lot("VTI", "indexed_equity", 14, 90.0), _lot("HELD", "active", 32, 40.0),
+                          _lot("BND", "bonds", 40, 75.0), _lot("CASH", "cash", 4000.0)],
+               [_held(fair=50.0, upside=0.0)])
+    a = build_actions(s, _market({"VTI": 100.0, "BND": 75.0, "HELD": 50.0}), Targets(), TODAY, review=False)
+    assert a.compliance.indexed_lt_active
+    assert [p.ticker for p in a.sells] == ["HELD"]
+    assert not any(n.startswith("IPS breach unresolved") for n in a.notes)
+
+
+def test_no_breach_no_note(store_on_target_with_passed_watch_item, market_on_target):
+    a = build_actions(store_on_target_with_passed_watch_item, market_on_target, Targets(), TODAY, review=False)
+    assert not any(n.startswith("IPS breach unresolved") for n in a.notes)

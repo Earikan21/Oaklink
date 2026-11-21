@@ -20,6 +20,7 @@ from fundkit.research.etf import EtfPremium
 
 MAX_LINES = 90
 NO_ACTION_DEFAULT = "portfolio within IPS bands and no watchlist name passed the gate"
+NO_ACTION_FLAGGED = "see IPS compliance flags above"
 
 _env = Environment(loader=FileSystemLoader(str(Path(__file__).parent / "templates")),
                    trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=False,
@@ -111,19 +112,24 @@ def _attention(ctx: MemoContext) -> str:
     return "; ".join(parts)
 
 
-def _compliance_lines(c: ComplianceReport) -> list[str]:
+def _flag_lines(c: ComplianceReport) -> list[str]:
     flags = [*c.sleeve_flags, *([c.active_ceiling_flag] if c.active_ceiling_flag else []), *c.trim_flags,
              *c.fund_flags]
     lines = [f"- {f}" for f in flags]
     if c.indexed_lt_active:
         lines.append("- indexed equity below active")
-    return lines or ["All green."]
+    return lines
 
 
-def _action_lines(a: ActionSet) -> list[str]:
+def _compliance_lines(c: ComplianceReport) -> list[str]:
+    return _flag_lines(c) or ["All green."]
+
+
+def _action_lines(a: ActionSet, c: ComplianceReport) -> list[str]:
+    """Notes are listed separately below these lines, so the "No action" reason never repeats one."""
     lines = [_action_line(p) for p in [*a.sells, *a.proposals]]
     if not lines:
-        lines = [f"No action — {a.notes[0] if a.notes else NO_ACTION_DEFAULT}"]
+        lines = [f"No action — {NO_ACTION_FLAGGED if _flag_lines(c) else NO_ACTION_DEFAULT}"]
     return lines
 
 
@@ -141,7 +147,7 @@ def _build(ctx: MemoContext, n_watch: int, n_active: int, n_earn: int,
         active_rows=[_active_line(x) for x in shown_active], active_more=len(ctx.active_rows) - len(shown_active),
         earnings_lines=earn[:n_earn], earnings_more=len(earn) - len(earn[:n_earn]),
         watch_rows=[_watch_line(w) for w in watch[:n_watch]], watch_more=len(watch) - len(watch[:n_watch]),
-        action_lines=_action_lines(ctx.actions), action_notes=ctx.actions.notes,
+        action_lines=_action_lines(ctx.actions, ctx.compliance), action_notes=ctx.actions.notes,
         total=_money(snap.total), bench=_money(snap.bench_total), delta=_money(snap.total - snap.bench_total),
         avi="n/a" if snap.active_vs_index is None else _money(snap.active_vs_index),
         turnover=f"{snap.turnover_qtd:.1%}",

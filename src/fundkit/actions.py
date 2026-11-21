@@ -28,6 +28,7 @@ MAX_PICKS = 3
 MIN_PICK_DOLLARS = 1.0
 INITIAL = "initial allocation"
 WARNING_WINDOW_DAYS = 120  # two 6-week review cycles plus slack
+BREACH_NOTE = "IPS breach unresolved (active ceiling / indexed<active): decide manually — candidates: {names}"
 INDEX_RULE_NOTE = ("pick sized by indexed ≥ active rule "
                    "(effective active ceiling {ceiling:.0%} at {stocks:.0%} stocks)")
 
@@ -235,10 +236,25 @@ def build_actions(store: Store, market: MarketData, targets: Targets, today: dat
         book.move(p.action, p.ticker, p.dollars, book.sleeve_of(p.ticker) or
                   ("bonds" if p.ticker == targets.bond_etf else "indexed_equity"))
 
+    _note_unresolved_breach(report, book, targets, total, notes)
+
     # (4) review runs: fund up to MAX_PICKS passed watchlist names from the index ETF
     if review and not unpriced:
         _picks(watch, book, sold_out, market, targets, total, out)
     return out
+
+
+def _note_unresolved_breach(report: ComplianceReport, book: _Book, targets: Targets, total: float,
+                            notes: list[str]) -> None:
+    """The engine never sells active names to fix the ceiling or indexed ≥ active (only trims and thesis
+    sells); if those flags are set and the post-trade book still breaches, say so and list the candidates."""
+    if not (report.active_ceiling_flag or report.indexed_lt_active):
+        return
+    active = book.sleeve_total("active")
+    if active <= targets.active_ceiling * total + EPS and book.sleeve_total("indexed_equity") + EPS >= active:
+        return
+    names = sorted(book.active().items(), key=lambda kv: (-kv[1], kv[0]))
+    notes.append(BREACH_NOTE.format(names=", ".join(t for t, _ in names)))
 
 
 def _load_or_note(loader, name: str, notes: list[str]) -> list:

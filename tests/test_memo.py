@@ -80,10 +80,20 @@ def test_no_action_line_when_empty(minimal_ctx):
             in render(minimal_ctx))
 
 
-def test_no_action_uses_first_note():
+def test_no_action_reason_is_fixed_and_notes_are_not_repeated():
     a = ActionSet(compliance=ComplianceReport(), notes=["market closed", "other"])
-    out = render(_ctx(actions=a))
-    assert "No action — market closed" in out
+    sec = _section(render(_ctx(actions=a)), 6)
+    assert "No action — portfolio within IPS bands and no watchlist name passed the gate" in sec
+    assert sec.count("- market closed") == 1 and not any("No action — market closed" in l for l in sec)
+    assert "- other" in sec
+
+
+def test_no_action_points_at_compliance_flags_when_present():
+    c = ComplianceReport(active_ceiling_flag="active 35.0% > 30% ceiling")
+    out = render(_ctx(compliance=c, actions=ActionSet(compliance=c, notes=["n1"])))
+    assert "No action — see IPS compliance flags above" in "\n".join(_section(out, 6))
+    c2 = ComplianceReport(fund_flags=["BND: expense ratio unavailable"])
+    assert "No action — see IPS compliance flags above" in render(_ctx(compliance=c2))
 
 
 def test_action_line_format(ctx_one_buy):
