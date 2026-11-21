@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import date
 
 import pytest
@@ -162,3 +163,12 @@ def test_schema_mismatch_exits_1_with_error_wording(data_dir):
     assert result.exit_code == 1
     assert result.output.startswith("error: schema mismatch in ") and "ledger.csv" in result.output
     assert "Traceback" not in result.output
+
+
+def test_formatted_sheet_value_exits_1_with_validation_wording(data_dir):
+    ledger = data_dir / "ledger.csv"
+    ledger.write_text(ledger.read_text(encoding="utf-8").splitlines()[0]
+                      + "\nx1,11/22/2026,BUY,VTI,\"1,500\",r,PASS,pending,,,\n", encoding="utf-8")
+    result = runner.invoke(app, ["run", "--dry-run", "--today", TODAY, "--data", str(data_dir)])
+    assert result.exit_code == 1
+    assert re.match(r"error: \d+ validation errors? for LedgerRow", result.output), result.output

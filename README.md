@@ -35,7 +35,10 @@ then `./data`. Exit codes: 0 ok; 1 `error: ...` on stderr (market or value error
 
 ## Data tables
 
-CSV files in the data dir; each maps to a tab of the "Oaklink Fund Ledger" Sheet.
+CSV files in the data dir; each maps to a tab of the "Oaklink Fund Ledger" Sheet. Headers must match exactly
+(same columns, same order), dates are ISO `YYYY-MM-DD`, and numbers are plain unformatted numbers (no `$`,
+no thousands separators, no `%`: 5% is `0.05`). A wrong header exits 1 with `error: schema mismatch in ...`;
+a badly formatted value exits 1 with a pydantic `validation error`. Fix the Sheet rather than retrying.
 
 - `holdings.csv`: `ticker`, `sleeve` (indexed_equity / active / bonds / cash), `shares`, `cost_basis` (per share), `lot_date`. Source of truth.
 - `targets.csv`: `key,value` IPS parameters (below).

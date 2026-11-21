@@ -24,3 +24,13 @@ def test_prompt_previews_dry_then_publishes_the_live_run():
     assert dry in PROMPT and live in PROMPT
     assert PROMPT.index(dry) < PROMPT.index("Write `notes.json`") < PROMPT.index(live)
     assert "--dry-run --notes" not in PROMPT  # the published memo is the live one
+
+
+def test_prompt_and_readme_require_iso_dates_and_plain_numbers():
+    for doc in (PROMPT, README):
+        assert "YYYY-MM-DD" in doc and "no thousands separators" in doc
+
+
+def test_prompt_maps_schema_and_validation_errors_to_sheet_formatting():
+    assert "`error: schema mismatch`" in PROMPT and "validation" in PROMPT
+    assert "Do not retry blindly" in PROMPT

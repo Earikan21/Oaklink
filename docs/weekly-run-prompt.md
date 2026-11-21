@@ -27,6 +27,11 @@ Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
 
    Performance is pulled too, but only the package ever appends to it. Do not edit any CSV by hand.
 
+   Write values exactly as the package expects: dates as ISO `YYYY-MM-DD` (not `11/22/2026`), numbers as
+   plain unformatted numbers (`1500.5`, not `$1,500.50`; `0.05`, not `5%`; no thousands separators), and
+   empty cells as empty. Read the Sheet's unformatted values; if the connector only gives formatted text,
+   strip the formatting before writing the CSV.
+
 2. **Install the toolkit.** The release zip holds a wheel (see its `INSTALL.txt`); pip cannot install the zip
    itself:
    `unzip -o <TOOLKIT_ZIP_PATH> -d toolkit && pip install toolkit/fundkit-*.whl --break-system-packages`
@@ -79,8 +84,12 @@ Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
   reconcile is idempotent next week. Step 7 is mandatory only after a successful step 5.
 - Exit code 2 (`error: data dir ... not found; run fundkit init first`): `fundkit init` was never run on
   this data directory. Stop and report; do not improvise.
-- Exit code 1 (`error: ...` on stderr; market data or value error): market data is unavailable. Report it.
-  Retry at most once.
+- Exit code 1 whose message starts with `error: schema mismatch` or contains `validation`
+  (e.g. `error: 1 validation error for LedgerRow`): a Sheet formatting problem (a moved/added column, a
+  formatted date or number, a percent typed as `5`). Do not retry blindly: report the exact message so Emmet
+  can fix the Sheet (or fix the CSV export from step 1 if the formatting came from your pull), then rerun.
+- Any other exit code 1 (`error: ...` on stderr; market data or value error): market data is unavailable.
+  Report it. Retry at most once.
 - A malformed `notes.json` gives exit 1 in step 5 before anything is written: fix the JSON and run step 5
   again with the same date.
 - The memo rendered but contains notes such as "benchmark unavailable": deliver it anyway (steps 4 to 8)
