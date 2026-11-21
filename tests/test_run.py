@@ -198,7 +198,7 @@ def test_sells_listed_first_and_est_tax_carried(store_trim, market_trim):
     assert [x.id for x in rows] == ["20261129-01-SELL-ACME", "20261129-02-SELL-VTI"]
     assert rows[0].amount == 300.0 and rows[0].est_tax == pytest.approx(9.0)
     assert rows[0].rationale == "trim 8.0% → 5% cap"
-    assert rows[1].est_tax is None
+    assert rows[1].est_tax == pytest.approx(7 * (100.0 - 90.0) * 0.24)  # rebalance SELL VTI, short-term lot
 
 
 def test_two_live_runs_same_day_do_not_duplicate(store_with_5_snapshots, fake_market_basic):

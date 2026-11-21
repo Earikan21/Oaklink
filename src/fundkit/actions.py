@@ -231,8 +231,9 @@ def build_actions(store: Store, market: MarketData, targets: Targets, today: dat
         notes.append(f"rebalance skipped: {e}")
         rebalance = []
     rebalance = _screen_fund_buys(rebalance, market, targets, notes)
-    out.proposals.extend(rebalance)
     for p in rebalance:
+        p = _taxed(p, book, prices)
+        out.proposals.append(p)
         book.move(p.action, p.ticker, p.dollars, book.sleeve_of(p.ticker) or
                   ("bonds" if p.ticker == targets.bond_etf else "indexed_equity"))
 
@@ -240,8 +241,23 @@ def build_actions(store: Store, market: MarketData, targets: Targets, today: dat
 
     # (4) review runs: fund up to MAX_PICKS passed watchlist names from the index ETF
     if review and not unpriced:
-        _picks(watch, book, sold_out, market, targets, total, out)
+        _picks(watch, book, sold_out, market, targets, total, prices, out)
+    if TAX_NOTE not in notes and any(p.est_tax for p in out.proposals):
+        notes.append(TAX_NOTE)
     return out
+
+
+def _taxed(p: Proposal, book: _Book, prices: dict[str, float]) -> Proposal:
+    """A SELL with `est_tax` from the ticker's current simulated lots (long-term first); those lots are
+    consumed in `book`. A BUY, or a SELL with no price, is returned unchanged."""
+    if p.action != "SELL" or p.ticker not in prices:
+        return p
+    price = prices[p.ticker]
+    lots = [h for h in book.holdings if h.ticker == p.ticker and h.shares > EPS]
+    shares = p.shares if p.shares is not None else p.dollars / price
+    sale = _sell_lots(lots, shares, price, book.today)
+    book.replace_lots(p.ticker, sale.remaining)
+    return p.model_copy(update={"est_tax": sale.est_tax})
 
 
 def _note_unresolved_breach(report: ComplianceReport, book: _Book, targets: Targets, total: float,
@@ -317,7 +333,7 @@ def _ratio(targets: Targets) -> dict[str, float]:
 
 
 def _picks(watch: list[WatchItem], book: _Book, sold_out: set[str], market: MarketData, targets: Targets,
-           total: float, out: ActionSet) -> None:
+           total: float, prices: dict[str, float], out: ActionSet) -> None:
     passed = [w for w in watch if w.status == "passed" and w.ticker not in book.values and w.ticker not in sold_out]
     passed.sort(key=lambda w: -(w.upside if w.upside is not None else -math.inf))
     if len(passed) > MAX_PICKS:
@@ -361,7 +377,7 @@ def _picks(watch: list[WatchItem], book: _Book, sold_out: set[str], market: Mark
             out.notes.append(f"{ticker} failed gate: " + "; ".join(g.reasons))
             continue
         out.proposals += [
-            Proposal(action="SELL", ticker=index, dollars=dollars, reason=f"fund {ticker}"),
+            _taxed(Proposal(action="SELL", ticker=index, dollars=dollars, reason=f"fund {ticker}"), book, prices),
             Proposal(action="BUY", ticker=ticker, dollars=dollars, reason=f"{g.upside:.0%} upside, gate passed"),
         ]
         book.move("SELL", index, dollars, "indexed_equity")

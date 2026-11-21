@@ -557,3 +557,32 @@ def test_breach_resolved_by_thesis_sell_has_no_note(tmp_path):
 def test_no_breach_no_note(store_on_target_with_passed_watch_item, market_on_target):
     a = build_actions(store_on_target_with_passed_watch_item, market_on_target, Targets(), TODAY, review=False)
     assert not any(n.startswith("IPS breach unresolved") for n in a.notes)
+
+
+# ---------------------------------------------------------------- I8: tax on ETF sells
+def test_rebalance_sells_of_index_and_bond_etf_carry_est_tax(tmp_path):
+    # total 10_000: VTI 6000 (LT lot @80) / BND 4000 (ST lot @70) / CASH 0 -> sell VTI 1000, BND 13 sh
+    s = _store(tmp_path, [_lot("VTI", "indexed_equity", 60, 80.0, d(-400)), _lot("BND", "bonds", 53.333333, 70.0),
+                          _lot("CASH", "cash", 0.0)])
+    a = build_actions(s, _market({"VTI": 100.0, "BND": 75.0}), Targets(), TODAY, review=False)
+    by = {p.ticker: p for p in a.proposals}
+    assert by["VTI"].action == "SELL" and by["VTI"].dollars == pytest.approx(1000.0)
+    assert by["VTI"].est_tax == pytest.approx(10 * (100 - 80) * 0.15)  # 30.0, long-term
+    assert by["BND"].action == "SELL" and by["BND"].shares == 13
+    assert by["BND"].est_tax == pytest.approx(13 * (75 - 70) * 0.24)  # 15.6, short-term
+    assert TAX_NOTE in a.notes
+
+
+def test_pick_funding_sell_carries_est_tax(store_on_target_with_passed_watch_item, market_on_target):
+    # VTI lot: 4.5 sh @300, d(-7); price 300 -> no gain, tax 0
+    a = build_actions(store_on_target_with_passed_watch_item, market_on_target, Targets(), TODAY, review=True)
+    fund = a.proposals[0]
+    assert (fund.action, fund.ticker) == ("SELL", "VTI") and fund.est_tax == 0.0
+    assert a.proposals[1].est_tax is None  # buys carry no tax
+
+
+def test_rebalance_buy_has_no_est_tax(tmp_path):
+    s = _store(tmp_path, [_lot("VTI", "indexed_equity", 30, 90.0), _lot("BND", "bonds", 40, 75.0),
+                          _lot("CASH", "cash", 4000.0)])
+    a = build_actions(s, _market({"VTI": 100.0, "BND": 75.0}), Targets(), TODAY, review=False)
+    assert [(p.action, p.ticker, p.est_tax) for p in a.proposals] == [("BUY", "VTI", None)]
