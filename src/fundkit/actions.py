@@ -137,10 +137,14 @@ def _warning_ages(ledger: list[LedgerRow], ticker: str, today: date) -> list[int
             if r.action == "NOTE" and r.rationale == f"thesis_warning:{ticker}"]
 
 
-def build_actions(store: Store, market: MarketData, targets: Targets, today: date, review: bool) -> ActionSet:
+def build_actions(store: Store, market: MarketData, targets: Targets, today: date, review: bool,
+                  watch: list[WatchItem] | None = None) -> ActionSet:
+    """`watch`, when given, replaces the stored watchlist (the run step passes this run's in-memory
+    revaluations so a dry run need not write them first)."""
     notes: list[str] = []
     holdings = store.load_holdings()
-    watch = _load_or_note(store.load_watchlist, "watchlist", notes)
+    if watch is None:
+        watch = _load_or_note(store.load_watchlist, "watchlist", notes)
     ledger = _load_or_note(store.load_ledger, "ledger", notes)
 
     values, unpriced = value_holdings(holdings, market)

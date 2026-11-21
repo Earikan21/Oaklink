@@ -220,7 +220,7 @@ def test_ledger_notes_written_on_live_run_only(store_with_cash_3000, fake_market
     note = LedgerRow(id=f"tw-{TODAY}-ACME", date=TODAY, action="NOTE", ticker="ACME", amount=0,
                      rationale="thesis_warning:ACME", ips_check="PASS", response="applied")
 
-    def fake_build(store, market, targets, today, review):
+    def fake_build(store, market, targets, today, review, watch=None):
         return ActionSet(compliance=ComplianceReport(), ledger_notes=[note], total=3000.0)
 
     monkeypatch.setattr(run_mod, "build_actions", fake_build)
@@ -438,3 +438,59 @@ def test_refresh_watchlist_crash_becomes_note(store_with_candidate, monkeypatch)
     r = weekly_run(store_with_candidate, _market_with_acme_candidate(), TODAY, dry_run=True, force_review=True)
     assert "watchlist refresh failed (RuntimeError); kept last week's values" in r.actions.notes
     assert r.context.watch_summary[0].last_valued is None
+
+
+# ---------------------------------------------------------------- ordering: this run's valuations feed actions
+def test_item_that_passes_in_this_refresh_is_picked_same_review(tmp_path):
+    from test_actions import _held, _market, _on_target_holdings
+
+    m = _market({"VTI": 300.0, "BND": 75.0, "HELD": 50.0}, candidates=("ACME",), held_hist=("HELD",))
+    m.data["VTI"]["history"] = make_history(300.0, 300)
+    m.data["BND"]["history"] = make_history(75.0, 300)
+    candidate = WatchItem(ticker="ACME", thesis="t", last_valued=None, fair_value=None, upside=None,
+                          status="candidate")
+    s = _store(tmp_path, _on_target_holdings(), watch=[_held(), candidate])
+
+    r = weekly_run(s, m, TODAY, dry_run=True, force_review=True)
+    assert [(p.action, p.ticker) for p in r.actions.proposals] == [("SELL", "VTI"), ("BUY", "ACME")]
+    assert {w.ticker: w.status for w in r.context.watch_summary}["ACME"] == "passed"
+    assert s.load_watchlist() == [_held(), candidate]  # dry run: refresh not persisted
+
+    weekly_run(s, m, TODAY, dry_run=False, force_review=True)
+    assert {w.ticker: w.status for w in s.load_watchlist()}["ACME"] == "passed"
+
+
+def test_thesis_sell_uses_this_runs_revaluation(tmp_path):
+    # stored fair value 75 is far above the price; after the 16% move the revaluation brings it below 58
+    s = _store(tmp_path, _acme_holdings(), watch=[_acme_item()])
+    m = _acme_mkt(58.0)
+    r = weekly_run(s, m, TODAY, dry_run=True, force_review=False)
+    fv = r.context.active_rows[0].fair_value
+    assert fv < 58.0  # precondition: ACME's fresh blended value is below the price
+    assert [(p.action, p.ticker, p.reason) for p in r.actions.sells] == [("SELL", "ACME", "fair value reached")]
+
+
+# ---------------------------------------------------------------- benchmark failure
+def test_benchmark_failure_renders_memo_with_note(store_with_cash_3000):
+    data = _base_data()
+    del data["VTI"]["history"]
+    r = weekly_run(store_with_cash_3000, FakeMarket(data), TODAY, dry_run=False)
+    assert "benchmark unavailable: MarketUnavailable" in r.actions.notes
+    assert "- benchmark unavailable: MarketUnavailable" in r.memo_md
+    assert r.written is True
+    snap = r.snapshot
+    assert (snap.date, snap.total, snap.cash, snap.indexed_equity, snap.bench_total) == (TODAY, 3000.0, 3000.0, 0.0, 0.0)
+    assert (snap.active_vs_index, snap.turnover_qtd, snap.unpriced) == (None, 0.0, "")
+    assert store_with_cash_3000.load_performance() == [snap]
+
+
+def test_benchmark_fallback_reports_sleeves_and_unpriced(tmp_path):
+    data = _base_data()
+    del data["VTI"]["history"]
+    data["ACME"] = {}  # held but unquotable
+    s = _store(tmp_path, [_lot("VTI", "indexed_equity", 5, 300.0), _lot("BND", "bonds", 12, 75.0),
+                          _lot("ACME", "active", 2, 10.0), _lot("CASH", "cash", 600.0)])
+    r = weekly_run(s, FakeMarket(data), TODAY, dry_run=True)
+    snap = r.snapshot
+    assert (snap.total, snap.indexed_equity, snap.bonds, snap.active, snap.cash) == (3000.0, 1500.0, 900.0, 0.0, 600.0)
+    assert snap.unpriced == "ACME"

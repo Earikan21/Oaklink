@@ -470,3 +470,12 @@ def test_accepted_pick_on_standard_fixture_keeps_indexed_ge_active(store_on_targ
     assert sleeves["indexed_equity"] == 1350 - 150 and sleeves["active"] == 150 + 150
     assert sleeves["indexed_equity"] >= sleeves["active"]
     assert not any("indexed ≥ active" in n for n in a.notes)  # (1350-150)/2 = 600 > 150: cap binds
+
+
+def test_watch_override_replaces_stored_watchlist(tmp_path, market_on_target):
+    stored = WatchItem(ticker="ACME", thesis="t", last_valued=None, fair_value=None, upside=None, status="candidate")
+    s = _store(tmp_path, _on_target_holdings(), [_held(), stored])
+    assert build_actions(s, market_on_target, Targets(), TODAY, review=True).gated == []
+    a = build_actions(s, market_on_target, Targets(), TODAY, review=True, watch=[_held(), _passed("ACME", 0.31)])
+    assert _pairs(a.proposals) == [("SELL", "VTI", 150.0), ("BUY", "ACME", 150.0)]
+    assert s.load_watchlist() == [_held(), stored]  # the override is never written back
