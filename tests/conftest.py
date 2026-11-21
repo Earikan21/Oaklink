@@ -29,18 +29,18 @@ from fundkit.market import MarketUnavailable
 from fundkit.models import Quote
 
 
-def make_history(start_price: float, days: int, drift: float = 0.0) -> pd.DataFrame:
+def make_history(start_price: float, days: int, drift: float = 0.0, volume: float = 1_000_000.0) -> pd.DataFrame:
     """Synthetic OHLCV frame, tz-naive business-day index ending 2026-11-27.
 
     Close compounds at `drift` per day from `start_price`; High/Low are +/-1%
-    of Close, Open is the prior Close. Deterministic (no randomness).
+    of Close, Open is the prior Close, Volume is constant `volume`. Deterministic (no randomness).
     """
     idx = pd.bdate_range(end="2026-11-27", periods=days)
     close = start_price * (1.0 + drift) ** np.arange(days)
     open_ = np.concatenate([[start_price], close[:-1]])
     return pd.DataFrame(
         {"Open": open_, "High": close * 1.01, "Low": close * 0.99, "Close": close,
-         "Volume": np.full(days, 1_000_000.0)},
+         "Volume": np.full(days, volume)},
         index=idx,
     )
 
