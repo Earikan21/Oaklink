@@ -183,3 +183,11 @@ def test_rebalance_bond_one_share_tolerance_11_held_at_75_30():
     values = {"VTI": 1500.0, "BND": 11 * 75.3, "CASH": 671.7}  # bonds 27.6%: gap $71.7 = 1 share
     props = rebalance_proposals(holdings, values, Targets(band=0.01), {"VTI": 300.0, "BND": 75.3}, review=False)
     assert props == []
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -5.0])
+def test_non_finite_or_non_positive_price_is_unpriced(three_k_portfolio, fake_market_3k, bad):
+    fake_market_3k.data["VTI"]["quote"] = fake_market_3k.data["VTI"]["quote"].model_copy(update={"price": bad})
+    values, unpriced = value_holdings(three_k_portfolio[0], fake_market_3k)
+    assert unpriced == ["VTI"]
+    assert values == pytest.approx({"BND": 900.0, "CASH": 600.0})

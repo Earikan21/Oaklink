@@ -1,4 +1,5 @@
 """Market data layer: a MarketData protocol and a cached yfinance implementation."""
+import math
 import pickle
 import re
 import time
@@ -64,6 +65,15 @@ def build_equity_query(query: dict):
     return q, int(query.get("limit", _DEFAULT_SCREEN_LIMIT))
 
 
+def _usable_price(x) -> float | None:
+    """`x` as a float if it is a finite, positive price; otherwise None."""
+    try:
+        p = float(x)
+    except (TypeError, ValueError):
+        return None
+    return p if math.isfinite(p) and p > 0 else None
+
+
 def _expense_ratio_fraction(raw: float | None) -> float | None:
     # yfinance quotes netExpenseRatio in percent (VTI: 0.03 means 0.03%; a 0.9% fund: 0.9).
     # Quote.expense_ratio is a fraction, so always divide by 100.
@@ -99,7 +109,7 @@ class YFMarket:
     def _fetch_quote(self, ticker: str) -> Quote:
         t = yf.Ticker(ticker)
         try:
-            price = t.fast_info["lastPrice"]
+            price = _usable_price(t.fast_info["lastPrice"])
         except Exception:
             price = None
         info: dict = {}
@@ -107,13 +117,13 @@ class YFMarket:
             info = t.info or {}
         except Exception:
             pass
-        if price is None:
-            price = info.get("regularMarketPrice")
+        if price is None:  # missing, NaN, inf or <= 0: try the info price, else the ticker is unavailable
+            price = _usable_price(info.get("regularMarketPrice"))
         if price is None:
             raise MarketUnavailable(ticker)
         return Quote(
             ticker=ticker,
-            price=float(price),
+            price=price,
             bid=info.get("bid"),
             ask=info.get("ask"),
             expense_ratio=_expense_ratio_fraction(info.get("netExpenseRatio")),

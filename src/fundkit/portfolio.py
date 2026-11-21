@@ -1,4 +1,5 @@
 """Portfolio math: valuation, sleeve/name weights, and band-driven rebalance proposals."""
+import math
 from typing import Literal
 
 from pydantic import BaseModel
@@ -23,7 +24,8 @@ class Proposal(BaseModel):
 def value_holdings(holdings: list[Holding], market: MarketData) -> tuple[dict[str, float], list[str]]:
     """Return ({ticker: market_value}, unpriced tickers). Lots of one ticker are summed.
 
-    CASH is valued at its dollar amount and never priced.
+    CASH is valued at its dollar amount and never priced. A non-finite or non-positive quote price counts as
+    unpriced (never valued at NaN or zero).
     """
     values: dict[str, float] = {}
     unpriced: list[str] = []
@@ -36,10 +38,13 @@ def value_holdings(holdings: list[Holding], market: MarketData) -> tuple[dict[st
             continue
         if h.ticker not in prices:
             try:
-                prices[h.ticker] = market.quote(h.ticker).price
+                price = float(market.quote(h.ticker).price)
             except MarketUnavailable:
+                price = math.nan
+            if not (math.isfinite(price) and price > 0):
                 unpriced.append(h.ticker)
                 continue
+            prices[h.ticker] = price
         values[h.ticker] = values.get(h.ticker, 0.0) + h.shares * prices[h.ticker]
     return values, unpriced
 

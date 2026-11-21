@@ -161,3 +161,16 @@ def test_make_history_shape():
     assert list(h.columns) == ["Open", "High", "Low", "Close", "Volume"]
     assert len(h) == 10 and h.index.tz is None
     assert h["Close"].iloc[0] == 100.0 and h["Close"].iloc[-1] > 100.0
+
+
+# ---------------------------------------------------------------- I5: invalid prices are unavailable
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -1.0, None])
+def test_invalid_price_raises_market_unavailable(tmp_path, monkeypatch, bad):
+    _patch(monkeypatch, price=bad, info={"regularMarketPrice": bad})
+    with pytest.raises(MarketUnavailable):
+        YFMarket(tmp_path).quote("ZZZZ")
+
+
+def test_invalid_fast_price_falls_back_to_valid_info_price(tmp_path, monkeypatch):
+    _patch(monkeypatch, price=float("nan"), info={"regularMarketPrice": 42.0})
+    assert YFMarket(tmp_path).quote("X").price == 42.0
