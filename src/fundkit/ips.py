@@ -18,6 +18,7 @@ class ComplianceReport(BaseModel):
     sleeve_flags: list[str] = []
     active_ceiling_flag: str | None = None
     trim_flags: list[str] = []
+    trim_tickers: list[str] = []  # same names, same order as trim_flags
     indexed_lt_active: bool = False
     unpriced: list[str] = []
 
@@ -51,10 +52,11 @@ def compliance(holdings: list[Holding], values: dict[str, float], targets: Targe
     ceiling_flag = (f"active {w['active'] * 100:.1f}% > {targets.active_ceiling * 100:.0f}% ceiling"
                     if w["active"] > targets.active_ceiling + EPS else None)
     thr = targets.review_trim if review else targets.trim_threshold
-    trim_flags = [f"{t} {wt * 100:.1f}% > {thr * 100:.1f}% trim threshold"
-                  for t, wt in sorted(name_weights(holdings, values).items()) if wt > thr + EPS]
+    over = [(t, wt) for t, wt in sorted(name_weights(holdings, values).items()) if wt > thr + EPS]
+    trim_flags = [f"{t} {wt * 100:.1f}% > {thr * 100:.1f}% trim threshold" for t, wt in over]
     return ComplianceReport(
         sleeve_flags=sleeve_flags, active_ceiling_flag=ceiling_flag, trim_flags=trim_flags,
+        trim_tickers=[t for t, _ in over],
         indexed_lt_active=w["indexed_equity"] < w["active"], unpriced=list(unpriced))
 
 

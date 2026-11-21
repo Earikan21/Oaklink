@@ -354,3 +354,22 @@ def test_build_actions_never_writes_to_store(tmp_path):
     a = build_actions(s, m, Targets(), TODAY, review=True)
     assert a.ledger_notes  # a warning was produced ...
     assert _snapshot(tmp_path) == before  # ... but nothing was persisted
+
+
+def _warning(when: date) -> LedgerRow:
+    return LedgerRow(id=f"tw-{when}-HELD", date=when, action="NOTE", ticker="HELD", amount=0,
+                     rationale="thesis_warning:HELD", ips_check="PASS", response="applied")
+
+
+@pytest.mark.parametrize("age_days, sells", [(130, False), (121, False), (120, True), (40, True)])
+def test_thesis_warning_counts_only_within_120_days(tmp_path, age_days, sells):
+    m = _market({"VTI": 300.0, "BND": 75.0, "HELD": 50.0})
+    _down_revisions(m, "HELD")
+    s = _store(tmp_path, _thesis_holdings(), [_held(fair=55.0, upside=-0.05)], ledger=[_warning(d(-age_days))])
+    a = build_actions(s, m, Targets(), TODAY, review=True)
+    if sells:
+        assert _pairs(a.sells) == [("SELL", "HELD", 100.0)]
+        assert a.ledger_notes == []
+    else:  # stale warning ignored: a fresh one is emitted instead of a sell
+        assert a.sells == []
+        assert [r.id for r in a.ledger_notes] == [f"tw-{TODAY}-HELD"]

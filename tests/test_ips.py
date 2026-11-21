@@ -25,7 +25,7 @@ def test_constants():
 
 def test_no_flags_when_on_target(three_k_portfolio):
     rep = compliance(*three_k_portfolio, Targets(), review=False)
-    assert rep.sleeve_flags == [] and rep.trim_flags == []
+    assert rep.sleeve_flags == [] and rep.trim_flags == [] and rep.trim_tickers == []
     assert rep.active_ceiling_flag is None and rep.indexed_lt_active is False and rep.unpriced == []
 
 
@@ -59,6 +59,7 @@ def test_trim_threshold_7_5_weekly_6_review(three_k_portfolio, review, aapl_doll
     holdings, values = with_active(three_k_portfolio, "AAPL", aapl_dollars, 600.0 - aapl_dollars)
     rep = compliance(holdings, values, Targets(), review=review)
     assert (len(rep.trim_flags) == 1) is flagged
+    assert rep.trim_tickers == (["AAPL"] if flagged else [])
 
 
 def test_trim_flag_string_weekly_and_review(three_k_portfolio):
@@ -180,6 +181,17 @@ def test_trim_boundary_exactly_at_threshold_not_flagged(three_k_portfolio):
     assert compliance(holdings, values, Targets(), review=False).trim_flags == []
     holdings, values = with_active(three_k_portfolio, "AAPL", 180.0, 420.0)  # exactly 6.0%
     assert compliance(holdings, values, Targets(), review=True).trim_flags == []
+    assert compliance(holdings, values, Targets(), review=True).trim_tickers == []
+
+
+def test_trim_tickers_parallel_to_flags_and_sorted(three_k_portfolio):
+    holdings, _ = three_k_portfolio
+    holdings = [h for h in holdings if h.ticker != "CASH"] + [
+        make_holding("ZZZ", "active", 1), make_holding("AAA", "active", 1), make_holding("CASH", "cash", 90.0)]
+    values = {"VTI": 1500.0, "BND": 900.0, "ZZZ": 240.0, "AAA": 270.0, "CASH": 90.0}  # ZZZ 8.0%, AAA 9.0%
+    rep = compliance(holdings, values, Targets(), review=False)
+    assert rep.trim_tickers == ["AAA", "ZZZ"]
+    assert [f.split(" ", 1)[0] for f in rep.trim_flags] == rep.trim_tickers
 
 
 def test_name_cap_boundary_exactly_5pct_allowed(three_k_portfolio):

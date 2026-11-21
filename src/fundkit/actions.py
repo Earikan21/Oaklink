@@ -27,6 +27,7 @@ TAX_NOTE = "tax estimate assumes 15% LT / 24% ST flat rates"
 MAX_PICKS = 3
 MIN_PICK_DOLLARS = 1.0
 INITIAL = "initial allocation"
+WARNING_WINDOW_DAYS = 120  # two 6-week review cycles plus slack
 
 
 class ActionSet(BaseModel):
@@ -122,13 +123,10 @@ def _first_run(holdings: list[Holding], market: MarketData, targets: Targets, to
     ]
 
 
-def _trim_tickers(report: ComplianceReport) -> list[str]:
-    # trim flags are formatted "<TICKER> <pct>% > <thr>% trim threshold" by ips.compliance
-    return [flag.split(" ", 1)[0] for flag in report.trim_flags]
-
-
-def _has_warning(ledger: list[LedgerRow], ticker: str) -> bool:
-    return any(r.action == "NOTE" and r.rationale == f"thesis_warning:{ticker}" for r in ledger)
+def _has_recent_warning(ledger: list[LedgerRow], ticker: str, today: date) -> bool:
+    """A thesis warning counts only within WARNING_WINDOW_DAYS; older ones are ignored."""
+    return any(r.action == "NOTE" and r.rationale == f"thesis_warning:{ticker}"
+               and (today - r.date).days <= WARNING_WINDOW_DAYS for r in ledger)
 
 
 def build_actions(store: Store, market: MarketData, targets: Targets, today: date, review: bool) -> ActionSet:
@@ -178,7 +176,7 @@ def build_actions(store: Store, market: MarketData, targets: Targets, today: dat
 
     # (1) trims down to the per-name cap
     if not unpriced:
-        for ticker in _trim_tickers(report):
+        for ticker in report.trim_tickers:
             if ticker in sold_out:
                 continue
             if ticker not in prices or ticker not in values:
@@ -254,7 +252,7 @@ def _thesis_reason(ticker: str, item: WatchItem | None, price: float, review: bo
         return None
     if direction != "down":
         return None
-    if _has_warning(ledger, ticker):
+    if _has_recent_warning(ledger, ticker, today):
         return "thesis broken: two reviews of negative revisions"
     out.ledger_notes.append(LedgerRow(
         id=f"tw-{today}-{ticker}", date=today, action="NOTE", ticker=ticker, amount=0,
