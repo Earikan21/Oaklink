@@ -55,3 +55,24 @@ def test_stage_accepts_exactly_250_days():
 
 def test_returns_plain_int(fake_market_uptrend):
     assert type(classify("X", fake_market_uptrend)) is int
+
+
+# ---------------------------------------------------------------- I6: gaps in the close series
+def test_downtrend_with_one_nan_still_stage_4():
+    h = make_history(100.0, 300, -0.002)
+    h.loc[h.index[-10], "Close"] = np.nan
+    assert classify("X", _m(h)) == 4
+
+
+def test_nans_count_against_the_minimum_history():
+    h = make_history(100.0, 255, -0.002)
+    h.loc[h.index[:10], "Close"] = np.nan  # 245 usable closes
+    with pytest.raises(ValueError, match="insufficient history"):
+        classify("X", _m(h))
+
+
+def test_non_finite_moving_average_is_insufficient_history():
+    h = make_history(100.0, 300, -0.002)
+    h.loc[h.index[-5], "Close"] = np.inf
+    with pytest.raises(ValueError, match="insufficient history"):
+        classify("X", _m(h))

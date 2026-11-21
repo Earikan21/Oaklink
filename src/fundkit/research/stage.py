@@ -1,4 +1,5 @@
 """Weinstein-style market stage (1-4) from price vs 50/150/200-day moving averages."""
+import math
 from typing import Literal
 
 from fundkit.market import MarketData
@@ -11,7 +12,7 @@ FLAT_SLOPE = 0.01  # 200MA moved < 1% over the lookback
 
 
 def classify(ticker: str, market: MarketData) -> Stage:
-    close = market.history(ticker, "2y")["Close"]
+    close = market.history(ticker, "2y")["Close"].dropna()  # a missing close must not void every MA
     if len(close) < MIN_ROWS:
         raise ValueError("insufficient history")
     price = float(close.iloc[-1])
@@ -20,6 +21,8 @@ def classify(ticker: str, market: MarketData) -> Stage:
     sma200_series = close.rolling(200).mean()
     sma200 = float(sma200_series.iloc[-1])
     sma200_prior = float(sma200_series.iloc[-1 - SLOPE_LOOKBACK])
+    if not all(math.isfinite(x) for x in (price, sma50, sma150, sma200, sma200_prior)):
+        raise ValueError("insufficient history")  # an inf close: no usable trend
 
     if price > sma150 > sma200 and sma200 > sma200_prior and price > sma50:
         return 2
