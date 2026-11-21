@@ -27,7 +27,9 @@ Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
 
    Performance is pulled too, but only the package ever appends to it. Do not edit any CSV by hand.
 
-2. **Install the toolkit.** `pip install <TOOLKIT_ZIP_PATH> --break-system-packages`
+2. **Install the toolkit.** The release zip holds a wheel (see its `INSTALL.txt`); pip cannot install the zip
+   itself:
+   `unzip -o <TOOLKIT_ZIP_PATH> -d toolkit && pip install toolkit/fundkit-*.whl --break-system-packages`
 
 3. **Run the cycle (live).**
    `fundkit run --data ./data --today <today> --out memo.md --json run.json`

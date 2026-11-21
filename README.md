@@ -6,6 +6,16 @@ and records fills in a Google Sheet.
 
 ## Install
 
+From a release zip (`python3 scripts/release.py` builds `dist/fundkit-<version>.zip`; it holds the wheel,
+the sdist, the docs and `INSTALL.txt`):
+
+```bash
+unzip -o fundkit-<version>.zip -d toolkit
+pip install toolkit/fundkit-*.whl --break-system-packages
+```
+
+From a checkout:
+
 ```bash
 pip install -e .          # development: pip install -e ".[dev]"
 ```
