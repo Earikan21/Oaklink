@@ -586,3 +586,49 @@ def test_rebalance_buy_has_no_est_tax(tmp_path):
                           _lot("CASH", "cash", 4000.0)])
     a = build_actions(s, _market({"VTI": 100.0, "BND": 75.0}), Targets(), TODAY, review=False)
     assert [(p.action, p.ticker, p.est_tax) for p in a.proposals] == [("BUY", "VTI", None)]
+
+
+# ---------------------------------------------------------------- I12: netting and the BUY-line cap
+def _cash_heavy_store(tmp_path, names):
+    # total 10_000: VTI 3000 / HELD 150 / BND 1950 / CASH 4900 -> stocks 31.5%: BUY VTI and BUY BND
+    return _store(tmp_path, [_lot("VTI", "indexed_equity", 30, 90.0), _lot("HELD", "active", 3, 40.0),
+                             _lot("BND", "bonds", 26, 75.0), _lot("CASH", "cash", 4900.0)],
+                  [_held()] + [_passed(t, u) for t, u in names])
+
+
+def test_buy_lines_capped_at_three_and_extra_picks_deferred(tmp_path):
+    names = (("C1", 0.40), ("C2", 0.35), ("C3", 0.30))
+    m = _market({"VTI": 100.0, "BND": 75.0, "HELD": 50.0}, candidates=tuple(t for t, _ in names),
+                held_hist=("HELD",))
+    a = build_actions(_cash_heavy_store(tmp_path, names), m, Targets(), TODAY, review=True)
+    buys = [p.ticker for p in a.proposals if p.action == "BUY"]
+    assert buys == ["VTI", "BND", "C1"], a.notes
+    assert "deferred: C2" in a.notes and "deferred: C3" in a.notes
+    assert not any(p.reason in ("fund C2", "fund C3") for p in a.proposals)
+    assert not any("fund C1" == p.reason for p in a.proposals)  # netted into the VTI line
+
+
+def test_same_ticker_buy_and_sell_are_netted(tmp_path):
+    names = (("C1", 0.40),)
+    m = _market({"VTI": 100.0, "BND": 75.0, "HELD": 50.0}, candidates=("C1",), held_hist=("HELD",))
+    a = build_actions(_cash_heavy_store(tmp_path, names), m, Targets(), TODAY, review=True)
+    vti = [p for p in a.proposals if p.ticker == "VTI"]
+    assert len(vti) == 1, a.proposals
+    (line,) = vti
+    c1 = next(p for p in a.proposals if p.ticker == "C1")
+    # rebalance BUY VTI (0.50 - 0.315) * 10_000 = 1850, minus the C1 funding SELL
+    assert line.action == "BUY" and line.dollars == pytest.approx(1850.0 - c1.dollars)
+    assert line.reason == "net: rebalance stocks 31.5% → 50%; fund C1"
+    assert line.est_tax is None
+
+
+def test_netting_unit_drops_sub_dollar_and_flips_to_sell():
+    from fundkit.portfolio import Proposal
+    P = lambda a, t, d, r: Proposal(action=a, ticker=t, dollars=d, reason=r)  # noqa: E731
+    out = actions_mod._net([P("BUY", "VTI", 100.0, "a"), P("SELL", "VTI", 99.5, "b"), P("BUY", "X", 5.0, "c")],
+                           {}, {}, TODAY)
+    assert _pairs(out) == [("BUY", "X", 5.0)]
+    lots = {"VTI": [_lot("VTI", "indexed_equity", 10, 80.0, d(-400))]}
+    out = actions_mod._net([P("BUY", "VTI", 100.0, "a"), P("SELL", "VTI", 300.0, "b")], lots, {"VTI": 100.0}, TODAY)
+    assert _pairs(out) == [("SELL", "VTI", 200.0)]
+    assert out[0].reason == "net: a; b" and out[0].est_tax == pytest.approx(2 * 20 * 0.15)

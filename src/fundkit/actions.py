@@ -25,7 +25,10 @@ LT_RATE = 0.15
 ST_RATE = 0.24
 TAX_NOTE = "tax estimate assumes 15% LT / 24% ST flat rates"
 MAX_PICKS = 3
+MAX_BUY_LINES = 3  # BUY proposals per (non-first) run, rebalance buys included
 MIN_PICK_DOLLARS = 1.0
+MIN_NET_DOLLARS = 1.0
+FUND_REASON = "fund {ticker}"
 INITIAL = "initial allocation"
 WARNING_WINDOW_DAYS = 120  # two 6-week review cycles plus slack
 BREACH_NOTE = "IPS breach unresolved (active ceiling / indexed<active): decide manually — candidates: {names}"
@@ -242,8 +245,62 @@ def build_actions(store: Store, market: MarketData, targets: Targets, today: dat
     # (4) review runs: fund up to MAX_PICKS passed watchlist names from the index ETF
     if review and not unpriced:
         _picks(watch, book, sold_out, market, targets, total, prices, out)
+
+    # (5) at most MAX_BUY_LINES buys (later picks are deferred with their funding), then one line per ticker
+    out.proposals = _net(_cap_buys(out.proposals, notes), lots_of, prices, today)
     if TAX_NOTE not in notes and any(p.est_tax for p in out.proposals):
         notes.append(TAX_NOTE)
+    return out
+
+
+def _cap_buys(proposals: list[Proposal], notes: list[str]) -> list[Proposal]:
+    """Keep the first MAX_BUY_LINES BUYs; each later BUY (always a pick: rebalance buys come first and are at
+    most two) is dropped with its funding SELL and noted "deferred: <ticker>". Counted before netting, so the
+    cap also holds after it."""
+    deferred: list[str] = []
+    buys = 0
+    for p in proposals:
+        if p.action == "BUY":
+            buys += 1
+            if buys > MAX_BUY_LINES:
+                deferred.append(p.ticker)
+    notes.extend(f"deferred: {t}" for t in deferred)
+    funding = {FUND_REASON.format(ticker=t) for t in deferred}
+    return [p for p in proposals
+            if not (p.action == "BUY" and p.ticker in deferred) and not (p.action == "SELL" and p.reason in funding)]
+
+
+def _net(proposals: list[Proposal], lots_of: dict[str, list[Holding]], prices: dict[str, float],
+         today: date) -> list[Proposal]:
+    """Merge every ticker that has both BUY and SELL proposals into one line at its first position: the net
+    dollars (and net shares, when every part has shares), reason "net: <a>; <b>", dropped when under $1.
+    A net SELL's est_tax is recomputed from the ticker's lots; a net BUY carries none."""
+    actions_of: dict[str, set[str]] = {}
+    for p in proposals:
+        actions_of.setdefault(p.ticker, set()).add(p.action)
+    out: list[Proposal] = []
+    netted: set[str] = set()
+    for p in proposals:
+        if actions_of[p.ticker] != {"BUY", "SELL"}:
+            out.append(p)
+            continue
+        if p.ticker in netted:
+            continue
+        netted.add(p.ticker)
+        group = [q for q in proposals if q.ticker == p.ticker]
+        net = sum(q.dollars if q.action == "BUY" else -q.dollars for q in group)
+        if abs(net) < MIN_NET_DOLLARS:
+            continue
+        shares = None
+        if all(q.shares is not None for q in group):
+            shares = abs(sum(q.shares if q.action == "BUY" else -q.shares for q in group))
+        action = "BUY" if net > 0 else "SELL"
+        est_tax = None
+        if action == "SELL" and p.ticker in prices:
+            price = prices[p.ticker]
+            est_tax = _sell_lots(lots_of.get(p.ticker, []), abs(net) / price, price, today).est_tax
+        out.append(Proposal(action=action, ticker=p.ticker, dollars=abs(net), shares=shares,
+                            reason="net: " + "; ".join(q.reason for q in group), est_tax=est_tax))
     return out
 
 
@@ -377,7 +434,8 @@ def _picks(watch: list[WatchItem], book: _Book, sold_out: set[str], market: Mark
             out.notes.append(f"{ticker} failed gate: " + "; ".join(g.reasons))
             continue
         out.proposals += [
-            _taxed(Proposal(action="SELL", ticker=index, dollars=dollars, reason=f"fund {ticker}"), book, prices),
+            _taxed(Proposal(action="SELL", ticker=index, dollars=dollars, reason=FUND_REASON.format(ticker=ticker)),
+                   book, prices),
             Proposal(action="BUY", ticker=ticker, dollars=dollars, reason=f"{g.upside:.0%} upside, gate passed"),
         ]
         book.move("SELL", index, dollars, "indexed_equity")
