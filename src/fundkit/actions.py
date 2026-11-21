@@ -28,6 +28,8 @@ MAX_PICKS = 3
 MIN_PICK_DOLLARS = 1.0
 INITIAL = "initial allocation"
 WARNING_WINDOW_DAYS = 120  # two 6-week review cycles plus slack
+INDEX_RULE_NOTE = ("pick sized by indexed ≥ active rule "
+                   "(effective active ceiling {ceiling:.0%} at {stocks:.0%} stocks)")
 
 
 class ActionSet(BaseModel):
@@ -100,6 +102,13 @@ class _Book:
     def sleeve_of(self, ticker: str) -> Sleeve | None:
         return next((h.sleeve for h in self.holdings if h.ticker == ticker), None)
 
+    def copy(self) -> "_Book":
+        return _Book(self.holdings, self.values, self.today)
+
+    def sleeve_total(self, sleeve: Sleeve) -> float:
+        tickers = {h.ticker for h in self.holdings if h.sleeve == sleeve}
+        return sum(v for t, v in self.values.items() if t in tickers)
+
     def active(self) -> dict[str, float]:
         tickers = {h.ticker for h in self.holdings if h.sleeve == "active"}
         return {t: v for t, v in self.values.items() if t in tickers and v > EPS}
@@ -123,10 +132,9 @@ def _first_run(holdings: list[Holding], market: MarketData, targets: Targets, to
     ]
 
 
-def _has_recent_warning(ledger: list[LedgerRow], ticker: str, today: date) -> bool:
-    """A thesis warning counts only within WARNING_WINDOW_DAYS; older ones are ignored."""
-    return any(r.action == "NOTE" and r.rationale == f"thesis_warning:{ticker}"
-               and (today - r.date).days <= WARNING_WINDOW_DAYS for r in ledger)
+def _warning_ages(ledger: list[LedgerRow], ticker: str, today: date) -> list[int]:
+    return [(today - r.date).days for r in ledger
+            if r.action == "NOTE" and r.rationale == f"thesis_warning:{ticker}"]
 
 
 def build_actions(store: Store, market: MarketData, targets: Targets, today: date, review: bool) -> ActionSet:
@@ -168,8 +176,8 @@ def build_actions(store: Store, market: MarketData, targets: Targets, today: dat
     #     they are listed after the trims.
     thesis: list[tuple[str, str]] = []
     for ticker in sorted({h.ticker for h in holdings if h.sleeve == "active"} & set(prices)):
-        reason = _thesis_reason(ticker, held_watch.get(ticker), prices[ticker], review, ledger, market, today,
-                                out)
+        reason = _thesis_reason(ticker, held_watch.get(ticker), prices[ticker], review, ledger, market, targets,
+                                today, out)
         if reason:
             thesis.append((ticker, reason))
     sold_out = {t for t, _ in thesis}
@@ -238,12 +246,12 @@ def _prices(holdings: list[Holding], market: MarketData, targets: Targets, unpri
 
 
 def _thesis_reason(ticker: str, item: WatchItem | None, price: float, review: bool, ledger: list[LedgerRow],
-                   market: MarketData, today: date, out: ActionSet) -> str | None:
+                   market: MarketData, targets: Targets, today: date, out: ActionSet) -> str | None:
     if item is None:
         return None
     if item.fair_value is not None and price >= item.fair_value:
         return "fair value reached"
-    if not review or item.upside is None or item.upside >= 0:
+    if not review or item.upside is None or item.upside >= targets.min_upside:
         return None
     try:
         direction = revision_summary(ticker, market).direction
@@ -252,14 +260,22 @@ def _thesis_reason(ticker: str, item: WatchItem | None, price: float, review: bo
         return None
     if direction != "down":
         return None
-    if _has_recent_warning(ledger, ticker, today):
+    ages = _warning_ages(ledger, ticker, today)
+    if any(0 < age <= WARNING_WINDOW_DAYS for age in ages):  # an earlier review within the window
         return "thesis broken: two reviews of negative revisions"
+    if 0 in ages:  # same-day re-run: the warning is already recorded; neither sell nor duplicate it
+        out.notes.append(f"thesis warning: {ticker} already recorded today")
+        return None
     out.ledger_notes.append(LedgerRow(
         id=f"tw-{today}-{ticker}", date=today, action="NOTE", ticker=ticker, amount=0,
         rationale=f"thesis_warning:{ticker}", ips_check="PASS", response="applied"))
-    out.notes.append(f"thesis warning: {ticker} estimates revised down with negative upside "
-                     f"({item.upside:.0%}); sell if repeated at the next review")
+    out.notes.append(f"thesis warning: {ticker} estimates revised down with thin upside "
+                     f"(upside {item.upside:.0%} < {targets.min_upside:.0%}); sell if repeated at the next review")
     return None
+
+
+def _ratio(targets: Targets) -> dict[str, float]:
+    return {"ceiling": min(targets.active_ceiling, targets.stocks / 2), "stocks": targets.stocks}
 
 
 def _picks(watch: list[WatchItem], book: _Book, sold_out: set[str], market: MarketData, targets: Targets,
@@ -272,11 +288,20 @@ def _picks(watch: list[WatchItem], book: _Book, sold_out: set[str], market: Mark
     index = targets.index_etf
     for item in passed[:MAX_PICKS]:
         ticker = item.ticker
-        active_value = sum(book.active().values())
-        dollars = min(targets.name_cap * total, targets.active_ceiling * total - active_value)
-        if dollars < MIN_PICK_DOLLARS:
+        active_value = book.sleeve_total("active")
+        by_ceiling = min(targets.name_cap * total, targets.active_ceiling * total - active_value)
+        # the pair sells `dollars` of indexed and buys `dollars` of active: indexed >= active
+        # after the pair needs dollars <= (indexed - active) / 2
+        by_index_rule = max(0.0, (book.sleeve_total("indexed_equity") - active_value) / 2)
+        if by_ceiling < MIN_PICK_DOLLARS:
             out.notes.append("active ceiling reached")
             return
+        if by_index_rule < MIN_PICK_DOLLARS:
+            out.notes.append("indexed ≥ active binds; no room for picks")
+            return
+        dollars = min(by_ceiling, by_index_rule)
+        if by_index_rule < by_ceiling and INDEX_RULE_NOTE.format(**_ratio(targets)) not in out.notes:
+            out.notes.append(INDEX_RULE_NOTE.format(**_ratio(targets)))
         if book.values.get(index, 0.0) + EPS < dollars:
             out.notes.append(f"{ticker}: not enough {index} to fund ${dollars:,.0f}; pick skipped")
             continue
@@ -286,7 +311,10 @@ def _picks(watch: list[WatchItem], book: _Book, sold_out: set[str], market: Mark
             out.notes.append(f"{ticker}: peers error ({type(e).__name__}: {e}); pick skipped")
             continue
         try:
-            g = gate(ticker, dollars, book.holdings, book.values, targets, market, peers, sorted(book.active()))
+            funded = book.copy()  # gate sees the post-pair state: index already sold to cash
+            funded.move("SELL", index, dollars, "indexed_equity")
+            g = gate(ticker, dollars, funded.holdings, funded.values, targets, market, peers,
+                     sorted(book.active()))
         except Exception as e:
             out.notes.append(f"{ticker}: gate error ({type(e).__name__}: {e}); pick skipped")
             continue

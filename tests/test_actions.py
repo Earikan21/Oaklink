@@ -6,13 +6,12 @@ import pytest
 
 import fundkit.actions as actions_mod
 from conftest import FakeMarket, _acme_market, d, make_history
-from fundkit.actions import ActionSet, build_actions
+from fundkit.actions import TAX_NOTE, ActionSet, build_actions
 from fundkit.models import Holding, LedgerRow, Quote, Targets, WatchItem
 from fundkit.store import Store
 
 TODAY = d(0)  # 2026-11-29
 PEERS = ["P1", "P2", "P3"]
-TAX_NOTE = "tax estimate assumes 15% LT / 24% ST flat rates"
 
 
 # ---------------------------------------------------------------- helpers
@@ -276,7 +275,7 @@ def test_thesis_sell_on_fair_value_reached(tmp_path):
 
 
 def test_thesis_warning_then_sell_on_second_negative_review(tmp_path):
-    held = _held(fair=55.0, upside=-0.05)
+    held = _held(fair=55.0, upside=0.10)
     m = _market({"VTI": 300.0, "BND": 75.0, "HELD": 50.0})
     _down_revisions(m, "HELD")
 
@@ -297,14 +296,14 @@ def test_thesis_warning_then_sell_on_second_negative_review(tmp_path):
 def test_negative_revisions_ignored_on_weekly_run(tmp_path):
     m = _market({"VTI": 300.0, "BND": 75.0, "HELD": 50.0})
     _down_revisions(m, "HELD")
-    s = _store(tmp_path, _thesis_holdings(), [_held(fair=55.0, upside=-0.05)])
+    s = _store(tmp_path, _thesis_holdings(), [_held(fair=55.0, upside=0.10)])
     a = build_actions(s, m, Targets(), TODAY, review=False)
     assert a.sells == [] and a.ledger_notes == []
 
 
 def test_revision_exception_becomes_note(tmp_path):
     m = _market({"VTI": 300.0, "BND": 75.0, "HELD": 50.0})  # no eps_trend -> MarketUnavailable
-    s = _store(tmp_path, _thesis_holdings(), [_held(fair=55.0, upside=-0.05)])
+    s = _store(tmp_path, _thesis_holdings(), [_held(fair=55.0, upside=0.10)])
     a = build_actions(s, m, Targets(), TODAY, review=True)
     assert a.sells == [] and a.ledger_notes == []
     assert any(n.startswith("HELD: revisions unavailable") for n in a.notes)
@@ -346,7 +345,7 @@ def test_empty_holdings_returns_empty_action_set(tmp_path):
 
 
 def test_build_actions_never_writes_to_store(tmp_path):
-    held = _held(fair=55.0, upside=-0.05)
+    held = _held(fair=55.0, upside=0.10)
     s = _store(tmp_path, _thesis_holdings(), [held, _passed("ACME", 0.31)])
     m = _market({"VTI": 300.0, "BND": 75.0, "HELD": 50.0}, candidates=("ACME",), held_hist=("HELD",))
     _down_revisions(m, "HELD")
@@ -365,7 +364,7 @@ def _warning(when: date) -> LedgerRow:
 def test_thesis_warning_counts_only_within_120_days(tmp_path, age_days, sells):
     m = _market({"VTI": 300.0, "BND": 75.0, "HELD": 50.0})
     _down_revisions(m, "HELD")
-    s = _store(tmp_path, _thesis_holdings(), [_held(fair=55.0, upside=-0.05)], ledger=[_warning(d(-age_days))])
+    s = _store(tmp_path, _thesis_holdings(), [_held(fair=55.0, upside=0.10)], ledger=[_warning(d(-age_days))])
     a = build_actions(s, m, Targets(), TODAY, review=True)
     if sells:
         assert _pairs(a.sells) == [("SELL", "HELD", 100.0)]
@@ -373,3 +372,101 @@ def test_thesis_warning_counts_only_within_120_days(tmp_path, age_days, sells):
     else:  # stale warning ignored: a fresh one is emitted instead of a sell
         assert a.sells == []
         assert [r.id for r in a.ledger_notes] == [f"tw-{TODAY}-HELD"]
+
+
+
+def test_same_day_warning_neither_sells_nor_duplicates(tmp_path):
+    m = _market({"VTI": 300.0, "BND": 75.0, "HELD": 50.0})
+    _down_revisions(m, "HELD")
+    s = _store(tmp_path, _thesis_holdings(), [_held(fair=55.0, upside=0.10)], ledger=[_warning(TODAY)])
+    a = build_actions(s, m, Targets(), TODAY, review=True)  # a re-run on the same day
+    assert a.sells == []
+    assert a.ledger_notes == []
+    assert "thesis warning: HELD already recorded today" in a.notes  # the revision check did run
+
+
+def test_down_revisions_with_upside_at_min_upside_is_not_a_warning(tmp_path):
+    m = _market({"VTI": 300.0, "BND": 75.0, "HELD": 50.0})
+    _down_revisions(m, "HELD")
+    # upside exactly min_upside (0.25): margin of safety intact -> no thesis check
+    s = _store(tmp_path, _thesis_holdings(), [_held(fair=62.5, upside=0.25)], ledger=[_warning(d(-40))])
+    a = build_actions(s, m, Targets(), TODAY, review=True)
+    assert a.sells == [] and a.ledger_notes == []
+
+
+def test_name_over_trim_threshold_and_at_fair_value_sold_once(tmp_path):
+    # ACME 16 @50 = 800 of 10_000 (8% > 7.5%) and price 50 >= fair value 45
+    s = _store(tmp_path, [_lot("VTI", "indexed_equity", 52, 90.0), _lot("ACME", "active", 16, 40.0, d(-400)),
+                          _lot("BND", "bonds", 40, 75.0), _lot("CASH", "cash", 1000.0)],
+               [_held("ACME", fair=45.0, upside=0.3)])
+    a = build_actions(s, _market({"VTI": 100.0, "ACME": 50.0, "BND": 75.0}), Targets(), TODAY, review=False)
+    assert _pairs(a.sells) == [("SELL", "ACME", 800.0)]
+    assert a.sells[0].reason == "fair value reached"
+    assert a.sells[0].est_tax == pytest.approx((50 - 40) * 16 * 0.15)  # 24.0
+
+
+def test_review_run_trims_at_6_5_pct(tmp_path):
+    # ACME 13 @50 = 650 of 10_000 = 6.5%: below the weekly 7.5% threshold, above the review 6%
+    holdings = [_lot("VTI", "indexed_equity", 50, 90.0), _lot("ACME", "active", 13, 40.0, d(-400)),
+                _lot("BND", "bonds", 40, 75.0), _lot("CASH", "cash", 1350.0)]
+    m = _market({"VTI": 100.0, "ACME": 50.0, "BND": 75.0})
+    assert build_actions(_store(tmp_path / "w", holdings), m, Targets(), TODAY, review=False).sells == []
+    a = build_actions(_store(tmp_path / "r", holdings), m, Targets(), TODAY, review=True)
+    assert _pairs(a.sells) == [("SELL", "ACME", 150.0)]  # 650 - 0.05 * 10_000
+    assert a.sells[0].reason == "trim 6.5% → 5% cap"
+    assert a.sells[0].est_tax == pytest.approx((50 - 40) * 3 * 0.15)  # 4.5
+
+
+# ---------------------------------------------------------------- indexed >= active invariant
+def _sleeve_totals_after(values: dict[str, float], proposals, sleeve_of: dict[str, str]) -> dict[str, float]:
+    v = dict(values)
+    for p in proposals:
+        sign = 1 if p.action == "BUY" else -1
+        v[p.ticker] = v.get(p.ticker, 0.0) + sign * p.dollars
+        v["CASH"] = v.get("CASH", 0.0) - sign * p.dollars
+    out: dict[str, float] = {}
+    for t, x in v.items():
+        out[sleeve_of.get(t, "active")] = out.get(sleeve_of.get(t, "active"), 0.0) + x
+    return out
+
+
+def test_pick_sized_so_indexed_never_trails_active(tmp_path):
+    # $10,000: VTI 2,850 / active 2,150 (4 x 500 + 150) / BND 3,000 / cash 2,000 -> 50/30/20, no rebalance
+    actives = ["A1", "A2", "A3", "A4", "A5"]
+    holdings = ([_lot("VTI", "indexed_equity", 28.5, 90.0)]
+                + [_lot(t, "active", 10, 40.0) for t in actives[:4]] + [_lot("A5", "active", 3, 40.0)]
+                + [_lot("BND", "bonds", 40, 75.0), _lot("CASH", "cash", 2000.0)])
+    s = _store(tmp_path, holdings, [_passed("ACME", 0.31)])
+    m = _market({"VTI": 100.0, "BND": 75.0, **{t: 50.0 for t in actives}}, candidates=("ACME",), held_hist=tuple(actives))
+    a = build_actions(s, m, Targets(), TODAY, review=True)
+    # min(cap 500, ceiling 3000 - 2150 = 850, (indexed 2850 - active 2150) / 2 = 350) = 350
+    dollars = min(0.05 * 10_000, 0.30 * 10_000 - 2150, (2850 - 2150) / 2)
+    assert dollars == 350
+    assert a.gated and a.gated[0].passed, a.notes
+    assert _pairs(a.proposals) == [("SELL", "VTI", 350.0), ("BUY", "ACME", 350.0)]
+    assert "pick sized by indexed ≥ active rule (effective active ceiling 25% at 50% stocks)" in a.notes
+    sleeves = _sleeve_totals_after(a.values, a.proposals, {"VTI": "indexed_equity", "BND": "bonds", "CASH": "cash"})
+    assert sleeves["indexed_equity"] == sleeves["active"] == 2500
+
+
+def test_no_room_for_picks_when_indexed_equals_active(tmp_path):
+    actives = ["A1", "A2", "A3", "A4", "A5"]
+    # VTI 2,500 / active 2,500 (5 x 500) / BND 3,000 / cash 2,000
+    holdings = ([_lot("VTI", "indexed_equity", 25, 90.0)] + [_lot(t, "active", 10, 40.0) for t in actives]
+                + [_lot("BND", "bonds", 40, 75.0), _lot("CASH", "cash", 2000.0)])
+    s = _store(tmp_path, holdings, [_passed("ACME", 0.31)])
+    m = _market({"VTI": 100.0, "BND": 75.0, **{t: 50.0 for t in actives}}, candidates=("ACME",), held_hist=tuple(actives))
+    a = build_actions(s, m, Targets(), TODAY, review=True)
+    assert a.gated == [] and a.proposals == []
+    assert "indexed ≥ active binds; no room for picks" in a.notes
+
+
+def test_accepted_pick_on_standard_fixture_keeps_indexed_ge_active(store_on_target_with_passed_watch_item,
+                                                                  market_on_target):
+    a = build_actions(store_on_target_with_passed_watch_item, market_on_target, Targets(), TODAY, review=True)
+    assert a.gated[0].passed
+    sleeves = _sleeve_totals_after(a.values, a.proposals,
+                                   {"VTI": "indexed_equity", "BND": "bonds", "CASH": "cash"})
+    assert sleeves["indexed_equity"] == 1350 - 150 and sleeves["active"] == 150 + 150
+    assert sleeves["indexed_equity"] >= sleeves["active"]
+    assert not any("indexed ≥ active" in n for n in a.notes)  # (1350-150)/2 = 600 > 150: cap binds
