@@ -6,7 +6,10 @@
 ---
 
 You are running the weekly Oaklink fund cycle. All arithmetic is done by the `fundkit` package; you only
-read its output and add judgment. Follow these steps in order. Today's date is `<today>` (YYYY-MM-DD).
+read its output and add judgment. Follow these steps in order.
+
+Date: substitute the current date in America/Los_Angeles as YYYY-MM-DD everywhere `<today>` appears, and use
+the identical date in steps 3, 5 and 6.
 
 Sheet: Google Sheet "Oaklink Fund Ledger", file id `<SHEET_FILE_ID>`.
 Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
@@ -50,6 +53,8 @@ Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
 7. **Push the data back.** Replace the contents of these Sheet tabs with the current local CSVs:
    `data/ledger.csv`, `data/watchlist.csv`, `data/holdings.csv`, `data/performance.csv`.
    Do not push `targets.csv` (the Sheet is its source).
+   Before replacing each tab, re-read it and compare its row count with what you pulled in step 1. If the
+   Sheet was edited since step 1 (counts differ), do not overwrite it: report the difference instead.
 
 8. **Summarize in chat.** If `memo.md` contains an `**Attention:**` line, repeat it as the first line of
    your chat summary, then give a short summary of the Actions section.
@@ -60,13 +65,17 @@ Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
 - Recommend an instrument the package flagged (failed `check_instrument` / gated).
 - Place, simulate, or "pretend-fill" a trade. Emmet executes everything himself and records fills in the Sheet.
 - Edit `targets.csv`. IPS changes are Emmet's: he edits the IPS, then the targets.
-- Skip step 7. An un-pushed run means next week reconciles against stale state.
+- Skip step 7 after a successful step 3. An un-pushed run means next week reconciles against stale state.
+  (If step 3 failed you stop and do not push; see below.)
 
 ## If something fails
 
+- If step 3 fails (exit 1 or 2), stop and do NOT push to the Sheet. The Sheet is unchanged and reconcile is
+  idempotent next week. Step 7 is mandatory only after a successful step 3.
 - Exit code 2 (`error: data dir ... not found; run fundkit init first`): `fundkit init` was never run on
   this data directory. Stop and report; do not improvise.
 - Exit code 1 (`error: ...` on stderr; market data or value error): market data is unavailable. Report it.
   Retry at most once.
+- A malformed `notes.json` gives exit 1 in step 5: fix the JSON; do not retry the run.
 - The memo rendered but contains notes such as "benchmark unavailable": deliver it anyway (steps 5 to 8)
   and say so in the chat summary.
