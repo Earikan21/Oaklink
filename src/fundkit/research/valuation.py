@@ -28,10 +28,10 @@ class Valuation(BaseModel):
     upside: float
     wacc: float
     g: float
-    tv_share: float
+    tv_share: float | None  # None when the DCF is unavailable or EV == 0
     # Keys are f"{wacc:.4f}|{g:.4f}" (pydantic cannot serialize tuple keys to JSON).
-    # Always 25 entries; a cell with wacc <= g holds NaN.
-    sensitivity: dict[str, float]
+    # Always 25 entries; a cell is None when wacc <= g or the DCF is unavailable.
+    sensitivity: dict[str, float | None]
     flags: list[str]
     confidence: Literal["high", "medium", "low"]
 
@@ -64,6 +64,11 @@ def key(wacc: float, g: float) -> str:
 
 
 def value_company(ticker: str, market: MarketData, peers: list[str], rf: float | None = None) -> Valuation:
+    """Value `ticker` by a 5-year DCF blended 50/50 with peer-multiple implied prices.
+
+    The sensitivity grid is Gordon-growth-only by design (per the recipe), so its centre
+    cell differs from the headline `dcf`, which uses the mean of Gordon and 15x exit TV.
+    """
     flags: list[str] = []
     price = market.quote(ticker).price
     info = market.info(ticker)
@@ -76,8 +81,11 @@ def value_company(ticker: str, market: MarketData, peers: list[str], rf: float |
 
     if rf is None:
         try:
-            rf = market.quote("^TNX").price / 100
+            rf = _num(market.quote("^TNX").price)
+            rf = None if rf is None else rf / 100
         except MarketUnavailable:
+            rf = None
+        if rf is None:
             rf = DEFAULT_RF
             flags.append("stale_rf")
     beta = _num(info.get("beta"))
@@ -109,7 +117,10 @@ def value_company(ticker: str, market: MarketData, peers: list[str], rf: float |
         flags.append("g_capped")
 
     # --- DCF -------------------------------------------------------------
-    dcf, tv_share, sensitivity = None, float("nan"), {}
+    dcf, tv_share = None, None
+    sensitivity: dict[str, float | None] = {
+        key(wacc + dw, gg): None for dw in WACC_OFFSETS for gg in SENS_G
+    }
     ebit_row = _row(income, "Operating Income")
     if ebit_row is None:
         ebit_row = _row(income, "EBIT")
@@ -156,19 +167,19 @@ def value_company(ticker: str, market: MarketData, peers: list[str], rf: float |
         tv_base = (gordon(wacc, g) + exit_tv) / 2
         pv_tv = tv_base / (1 + wacc) ** HORIZON
         ev = pv_fcff(wacc) + pv_tv
-        dcf = (ev + net_debt_adj) / shares
-        tv_share = pv_tv / ev if ev else float("nan")
-        if not 0.45 <= tv_share <= 0.85:
-            flags.append("tv_share")
-
-        for dw in WACC_OFFSETS:
-            w = wacc + dw
-            for gg in SENS_G:
-                if w <= gg:
-                    sensitivity[key(w, gg)] = float("nan")
-                else:
-                    sensitivity[key(w, gg)] = (pv_fcff(w) + gordon(w, gg) / (1 + w) ** HORIZON
-                                               + net_debt_adj) / shares
+        dcf = _num((ev + net_debt_adj) / shares)
+        if dcf is None:
+            flags.append("no_dcf")
+        else:
+            tv_share = pv_tv / ev if ev else None
+            if tv_share is None or not 0.45 <= tv_share <= 0.85:
+                flags.append("tv_share")
+            for dw in WACC_OFFSETS:
+                w = wacc + dw
+                for gg in SENS_G:
+                    if w > gg:
+                        sensitivity[key(w, gg)] = _num((pv_fcff(w) + gordon(w, gg) / (1 + w) ** HORIZON
+                                                        + net_debt_adj) / shares)
 
     # --- relative --------------------------------------------------------
     relative = None
@@ -182,11 +193,19 @@ def value_company(ticker: str, market: MarketData, peers: list[str], rf: float |
             except MarketUnavailable:
                 flags.append(f"peer_dropped:{p}")
                 continue
-            pes.append(_num(pi.get("forwardPE"), float("nan")))
-            evrs.append(_num(pi.get("enterpriseToRevenue"), float("nan")))
-            eves.append(_num(pi.get("enterpriseToEbitda"), float("nan")))
+            for field, bucket in (("forwardPE", pes), ("enterpriseToRevenue", evrs),
+                                  ("enterpriseToEbitda", eves)):
+                m = _num(pi.get(field), float("nan"))
+                if m <= 0:  # negative/zero multiples are meaningless; NaN is not (<= 0) so is kept as NaN
+                    flags.append(f"peer_multiple_dropped:{p}:{field}")
+                    m = float("nan")
+                bucket.append(m)
 
-        eps = _num(info.get("trailingEps"))
+        eps = _num(info.get("forwardEps"))
+        if eps is None:
+            eps = _num(info.get("trailingEps"))
+            if eps is not None:
+                flags.append("eps_trailing_used")
         if eps is None and (r := _row(income, "Diluted EPS")) is not None:
             eps = _num(r.iloc[0])
         rev_ttm = _num(info.get("totalRevenue"))
@@ -228,12 +247,13 @@ def value_company(ticker: str, market: MarketData, peers: list[str], rf: float |
     if blended is None or math.isnan(blended):
         raise ValueError(f"valuation impossible: no usable DCF or relative value for {ticker}")
 
-    skipped = {"pe_skipped", "ev_ebitda_skipped", "no_relative", "no_peers", "no_dcf"}
-    failures = (years < 3) + bool(skipped & set(flags))
-    if any(f.startswith("missing:") for f in flags) or failures == 2:
+    fl = set(flags)
+    if years < 3 or fl & {"no_dcf", "no_relative", "no_peers"} or any(f.startswith("missing:") for f in fl):
         confidence = "low"
+    elif fl & {"pe_skipped", "ev_ebitda_skipped", "g_capped", "tv_share", "growth_clamped"}:
+        confidence = "medium"
     else:
-        confidence = "medium" if failures == 1 else "high"
+        confidence = "high"
 
     return Valuation(
         ticker=ticker, price=price, dcf=dcf, relative=relative, blended=blended,

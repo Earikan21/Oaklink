@@ -3,8 +3,9 @@ import math
 import numpy as np
 import pytest
 
-from fundkit.research.valuation import value_company
-from tests.conftest import FakeMarket
+from fundkit.models import Quote
+from fundkit.research.valuation import Valuation, value_company
+from tests.conftest import _acme_market
 
 PEERS = ["P1", "P2", "P3"]
 
@@ -60,7 +61,7 @@ def test_no_peers(fake_market_acme):
     v = value_company("ACME", fake_market_acme, peers=[], rf=0.045)
     assert v.relative is None and "no_peers" in v.flags
     assert v.blended == pytest.approx(v.dcf)
-    assert v.confidence == "medium"
+    assert v.confidence == "low"
 
 
 def test_missing_row_flagged_low_confidence(fake_market_acme_no_nwc):
@@ -103,10 +104,86 @@ def test_hand_calculation_and_sensitivity_center(fake_market_acme):
 def test_sensitivity_nan_cell_when_wacc_le_g(fake_market_acme_low_beta):
     v = value_company("ACME", fake_market_acme_low_beta, peers=PEERS, rf=0.045)
     assert len(v.sensitivity) == 25
-    assert math.isnan(v.sensitivity["0.0102|0.0350"])  # wacc 0.01025 <= g 0.035
+    assert v.sensitivity["0.0102|0.0350"] is None  # wacc 0.01025 <= g 0.035
     assert not math.isnan(v.blended)
 
 
-def test_valuation_serializes_to_json(fake_market_acme):
+def test_json_round_trip_with_none_cells(fake_market_acme_low_beta):
+    v = value_company("ACME", fake_market_acme_low_beta, peers=PEERS, rf=0.045)
+    assert any(c is None for c in v.sensitivity.values())
+    assert Valuation.model_validate_json(v.model_dump_json()) == v
+
+
+def test_fewer_than_three_years_is_low_confidence():
+    v = value_company("ACME", _acme_market(n_years=2), peers=PEERS, rf=0.045)
+    assert v.confidence == "low" and v.dcf is not None
+
+
+def test_medium_confidence_on_pe_skipped():
+    m = _acme_market(info_overrides={"forwardEps": -1.0})
+    v = value_company("ACME", m, peers=PEERS, rf=0.045)
+    assert "pe_skipped" in v.flags and v.confidence == "medium"
+
+
+def test_growth_clamped():
+    m = _acme_market()
+    m.data["ACME"]["income_stmt"].loc["Total Revenue"] = [200.0, 110.0, 100.0]  # CAGR 0.414
+    v = value_company("ACME", m, peers=PEERS, rf=0.045)
+    assert "growth_clamped" in v.flags and v.confidence == "medium"
+
+
+def test_no_dcf_fills_25_none_cells_and_still_blends():
+    m = _acme_market(n_years=1)
+    v = value_company("ACME", m, peers=PEERS, rf=0.045)
+    assert v.dcf is None and "no_dcf" in v.flags and v.tv_share is None
+    assert len(v.sensitivity) == 25 and all(c is None for c in v.sensitivity.values())
+    assert v.blended == pytest.approx(v.relative) and v.confidence == "low"
+
+
+def test_valuation_impossible_raises():
+    with pytest.raises(ValueError, match="valuation impossible"):
+        value_company("ACME", _acme_market(n_years=1), peers=[], rf=0.045)
+
+
+def test_negative_peer_multiple_dropped(fake_market_acme):
+    d = fake_market_acme.data
+    d["P1"]["info"]["forwardPE"], d["P2"]["info"]["forwardPE"], d["P3"]["info"]["forwardPE"] = 30, 40, -15
     v = value_company("ACME", fake_market_acme, peers=PEERS, rf=0.045)
-    assert "sensitivity" in v.model_dump_json()
+    assert "peer_multiple_dropped:P3:forwardPE" in v.flags
+    # P/E median 35 -> 70; implied (70, 62.5, 47.375) -> 62.5 (a -15 would give median 30 -> 60)
+    assert v.relative == pytest.approx(62.5)
+
+
+def test_forward_eps_preferred_and_trailing_fallback(fake_market_acme):
+    d = fake_market_acme.data["ACME"]["info"]
+    d["forwardEps"] = 3.0
+    v = value_company("ACME", fake_market_acme, peers=PEERS, rf=0.045)
+    assert "eps_trailing_used" not in v.flags
+    assert v.relative == pytest.approx(np.median([22 * 3.0, 62.5, 47.375]))
+    del d["forwardEps"]
+    v = value_company("ACME", fake_market_acme, peers=PEERS, rf=0.045)
+    assert "eps_trailing_used" in v.flags
+    assert v.relative == pytest.approx(47.375)
+
+
+def test_nan_tnx_price_is_stale_rf(fake_market_acme):
+    fake_market_acme.data["^TNX"] = {"quote": Quote(ticker="^TNX", price=float("nan"), bid=None, ask=None,
+                                                    expense_ratio=None, nav=None, quote_type="INDEX",
+                                                    avg_volume=None)}
+    v = value_company("ACME", fake_market_acme, peers=PEERS)
+    assert "stale_rf" in v.flags and v.wacc == pytest.approx(0.10)
+
+
+def test_debt_path_kd_and_ev_bridge():
+    """debt 100, interest 5 -> kd 5%; wacc = 5/6*0.10 + 1/6*0.05*0.79; equity = EV + cash - debt."""
+    v = value_company("ACME", _acme_market(debt=100.0, interest=5.0), peers=PEERS, rf=0.045)
+    wacc = (500 / 600) * 0.10 + (100 / 600) * 0.05 * 0.79
+    assert v.wacc == pytest.approx(wacc)
+    tax, g, rev, pv, fcff = 0.21, 0.025, 121.0, 0.0, 0.0
+    for t, gr in enumerate(np.linspace(0.10, g + 0.01, 5), start=1):
+        rev *= 1 + gr
+        ebit, da = 0.2 * rev, 0.05 * rev
+        fcff = ebit * (1 - tax) + da - 0.07 * rev
+        pv += fcff / (1 + wacc) ** t
+    tv = 0.5 * (fcff * (1 + g) / (wacc - g) + (ebit + da) * 15)
+    assert v.dcf == pytest.approx((pv + tv / (1 + wacc) ** 5 + 20.0 - 100.0) / 10.0)

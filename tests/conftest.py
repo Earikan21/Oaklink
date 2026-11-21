@@ -161,12 +161,16 @@ def _acme_statements(ebit_margin: float = 0.20, drop: tuple[str, ...] = ()):
     return income, cash.drop(index=list(drop))
 
 
-def _acme_market(*, beta=1.0, ebit_margin=0.20, ebitda=24.2 + 6.05, drop=()):
+def _acme_market(*, beta=1.0, ebit_margin=0.20, ebitda=24.2 + 6.05, drop=(), debt=0.0, interest=0.0,
+                 n_years=3, info_overrides=None):
     income, cash = _acme_statements(ebit_margin, drop)
+    income.loc["Interest Expense", income.columns[0]] = interest
+    income, cash = income.iloc[:, :n_years], cash.iloc[:, :n_years]
     info = {
-        "marketCap": 500.0, "sharesOutstanding": 10.0, "totalDebt": 0.0, "totalCash": 20.0,
-        "beta": beta, "trailingEps": 2.0, "totalRevenue": 121.0, "ebitda": ebitda,
+        "marketCap": 500.0, "sharesOutstanding": 10.0, "totalDebt": debt, "totalCash": 20.0,
+        "beta": beta, "trailingEps": 2.0, "forwardEps": 2.0, "totalRevenue": 121.0, "ebitda": ebitda,
     }
+    info.update(info_overrides or {})
     data = {
         "ACME": {
             "quote": Quote(ticker="ACME", price=50.0, bid=None, ask=None, expense_ratio=None, nav=None,
