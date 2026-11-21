@@ -181,3 +181,22 @@ def test_snapshot_sleeves_sum_to_total_and_has_benchmark(tmp_path, fake_market_f
     assert snap.active_vs_index == pytest.approx(600.0 - 500.0)  # flat VTI
     assert snap.turnover_qtd == pytest.approx(500.0 / 2300.0)
     assert store.load_performance() == []  # snapshot() does not append
+
+
+class _PeriodAwareMarket(FakeMarket):
+    """Like a real provider: a '2y' request returns only the last 2 calendar years."""
+
+    def history(self, ticker, period="1y"):
+        df = super().history(ticker, period)
+        if period == "2y":
+            df = df[df.index >= df.index[-1] - pd.Timedelta(days=730)]
+        return df
+
+
+def test_benchmark_uses_full_history_beyond_two_years():
+    m = _PeriodAwareMarket({
+        "VTI": {"history": make_history(100.0, 1000, 0.0)},
+        "BND": {"history": make_history(50.0, 1000, 0.0)},
+    })
+    got = benchmark_value(3000.0, d(-900), d(0), m, Targets())
+    assert 3000.0 < got < 3000.0 * (0.8 + 0.2 * G1 ** 900)

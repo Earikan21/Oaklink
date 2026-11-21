@@ -17,7 +17,7 @@ REBALANCE_EVERY_DAYS = 42
 
 def _daily_close(market: MarketData, ticker: str, today: date) -> pd.Series:
     """Close series on every calendar day (non-trading days forward-filled) through `today`."""
-    close = market.history(ticker, period="2y")["Close"].dropna()
+    close = market.history(ticker, period="max")["Close"].dropna()
     close.index = pd.DatetimeIndex(close.index).normalize()
     end = max(close.index[-1], pd.Timestamp(today))
     return close.reindex(pd.date_range(close.index[0], end, freq="D")).ffill()
