@@ -1,0 +1,89 @@
+{{ title }}
+
+{% if attention %}
+**Attention:** {{ attention }}
+
+{% endif %}
+## 1. Last week
+
+{% for line in last_week %}
+{{ line }}
+{% endfor %}
+{% for w in warnings %}
+- {{ w }}
+{% endfor %}
+{{ ai["1"] }}
+## 2. IPS compliance
+
+{% for line in compliance %}
+{{ line }}
+{% endfor %}
+{{ ai["2"] }}
+## 3. Index & bond sleeve
+
+{% for line in etf_lines %}
+{{ line }}
+{% endfor %}
+{{ ai["3"] }}
+## 4. Active sleeve
+
+{% if active_rows %}
+| Ticker | Weight | 1w Δ | Revisions | Fair value | Upside | Earnings |
+|---|---|---|---|---|---|---|
+{% for r in active_rows %}
+{{ r }}
+{% endfor %}
+{% if active_more %}
+(… {{ active_more }} more in Sheet)
+{% endif %}
+{% elif active_more %}
+(… {{ active_more }} more in Sheet)
+{% else %}
+Empty.
+{% endif %}
+{% if active_rows and earnings_lines %}
+
+{% endif %}
+{% for b in earnings_lines %}
+- {{ b }}
+{% endfor %}
+{% if earnings_more %}
+(… {{ earnings_more }} more in Sheet)
+{% endif %}
+{{ ai["4"] }}
+## 5. Watchlist
+
+{% if watch_rows %}
+| Ticker | Status | Upside | Last valued |
+|---|---|---|---|
+{% for r in watch_rows %}
+{{ r }}
+{% endfor %}
+{% if watch_more %}
+(… {{ watch_more }} more in Sheet)
+{% endif %}
+{% elif watch_more %}
+(… {{ watch_more }} more in Sheet)
+{% else %}
+Empty.
+{% endif %}
+{{ ai["5"] }}
+## 6. Actions
+
+{% for line in action_lines %}
+{{ line }}
+{% endfor %}
+{% if action_notes %}
+
+{% for n in action_notes %}
+- {{ n }}
+{% endfor %}
+{% endif %}
+{{ ai["6"] }}
+## 7. Scorecard
+
+- total {{ total }}
+- benchmark {{ bench }} (Δ {{ delta }})
+- active vs index: {{ avi }}
+- turnover QTD: {{ turnover }}
+{{ ai["7"] }}
