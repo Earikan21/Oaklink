@@ -3,10 +3,12 @@ import re
 
 from pydantic import BaseModel
 
+from fundkit.market import MarketData
 from fundkit.models import Holding, Quote, Targets
-from fundkit.portfolio import EPS, name_weights, outside_band, sleeve_weights
+from fundkit.portfolio import CASH_TICKER, EPS, name_weights, outside_band, sleeve_weights
 
 ALLOWED_TYPES = {"ETF", "MUTUALFUND", "EQUITY"}
+FUND_TYPES = {"ETF", "MUTUALFUND"}
 # Matched as whole words, case-insensitively, except "ultra", which matches as a word prefix
 # (UltraPro, UltraShort are leveraged; "Ultra Short-Term Bond" false-positives by design). "short" is deliberately omitted: it would
 # false-positive on names like "Short-Term Treasury"; inverse/bear funds are caught by
@@ -21,11 +23,15 @@ class ComplianceReport(BaseModel):
     trim_tickers: list[str] = []  # same names, same order as trim_flags
     indexed_lt_active: bool = False
     unpriced: list[str] = []
+    fund_flags: list[str] = []  # "<ticker>: <violation>" for held non-equity instruments
 
 
 def check_instrument(q: Quote, info: dict, targets: Targets = Targets()) -> list[str]:
     violations: list[str] = []
-    if q.expense_ratio is not None and q.expense_ratio >= targets.fee_cap:
+    if q.expense_ratio is None:
+        if q.quote_type in FUND_TYPES:  # a fund whose fee cannot be verified fails closed
+            violations.append("expense ratio unavailable")
+    elif q.expense_ratio >= targets.fee_cap:
         violations.append(f"expense ratio {q.expense_ratio * 100:.2f}% >= {targets.fee_cap * 100:.2f}% cap")
     if q.quote_type not in ALLOWED_TYPES:
         violations.append(f"quote type {q.quote_type} not allowed")
@@ -37,8 +43,37 @@ def check_instrument(q: Quote, info: dict, targets: Targets = Targets()) -> list
     return violations
 
 
+def instrument_violations(ticker: str, market: MarketData, targets: Targets) -> list[str]:
+    """`check_instrument` on live data; a quote or info failure is itself a violation."""
+    try:
+        q, info = market.quote(ticker), market.info(ticker)
+    except Exception:
+        return ["instrument data unavailable"]
+    return check_instrument(q, info, targets)
+
+
+def _fund_flags(holdings: list[Holding], market: MarketData, targets: Targets) -> list[str]:
+    """Instrument violations for every held non-equity ticker. Unquotable tickers are skipped here: they are
+    already reported as unpriced."""
+    flags: list[str] = []
+    for t in dict.fromkeys(h.ticker for h in holdings if h.ticker != CASH_TICKER):
+        try:
+            q = market.quote(t)
+        except Exception:
+            continue
+        if q.quote_type == "EQUITY":
+            continue
+        try:
+            violations = check_instrument(q, market.info(t), targets)
+        except Exception:
+            violations = ["instrument data unavailable"]
+        flags.extend(f"{t}: {v}" for v in violations)
+    return flags
+
+
 def compliance(holdings: list[Holding], values: dict[str, float], targets: Targets, review: bool,
-               unpriced: list[str] = []) -> ComplianceReport:
+               unpriced: list[str] = [], market: MarketData | None = None) -> ComplianceReport:
+    """Band, ceiling and trim flags; with `market`, also instrument checks on held funds (`fund_flags`)."""
     w = sleeve_weights(holdings, values)
     stocks = w["indexed_equity"] + w["active"]
     current = {"stocks": stocks, "bonds": w["bonds"], "cash": w["cash"]}
@@ -57,7 +92,8 @@ def compliance(holdings: list[Holding], values: dict[str, float], targets: Targe
     return ComplianceReport(
         sleeve_flags=sleeve_flags, active_ceiling_flag=ceiling_flag, trim_flags=trim_flags,
         trim_tickers=[t for t, _ in over],
-        indexed_lt_active=w["indexed_equity"] < w["active"], unpriced=list(unpriced))
+        indexed_lt_active=w["indexed_equity"] < w["active"], unpriced=list(unpriced),
+        fund_flags=_fund_flags(holdings, market, targets) if market is not None else [])
 
 
 def buy_allowed(ticker: str, dollars: float, holdings: list[Holding], values: dict[str, float],

@@ -124,9 +124,18 @@ def test_fee_cap_violation():
     assert check_instrument(quote(er=0.009), {"longName": "X Fund"}) == ["expense ratio 0.90% >= 0.90% cap"]
 
 
-def test_fee_just_under_cap_ok_and_none_ok():
+def test_fee_just_under_cap_ok():
     assert check_instrument(quote(er=0.0089), {"longName": "X Fund"}) == []
-    assert check_instrument(quote(er=None), {"longName": "X Fund"}) == []
+
+
+@pytest.mark.parametrize("quote_type", ["ETF", "MUTUALFUND"])
+def test_fund_without_expense_ratio_fails_closed(quote_type):
+    assert check_instrument(quote(er=None, quote_type=quote_type), {"longName": "X Fund"}) == [
+        "expense ratio unavailable"]
+
+
+def test_equity_without_expense_ratio_is_fine():
+    assert check_instrument(quote(er=None, quote_type="EQUITY"), {"longName": "X Corp"}) == []
 
 
 def test_fee_cap_comes_from_targets():
@@ -196,3 +205,39 @@ def test_trim_tickers_parallel_to_flags_and_sorted(three_k_portfolio):
 
 def test_name_cap_boundary_exactly_5pct_allowed(three_k_portfolio):
     assert buy_allowed("AAPL", 150.0, *three_k_portfolio, Targets()) == (True, "ok")
+
+
+# ---------------------------------------------------------------- C1: held funds are instrument-checked
+def _fund_market(entries: dict):
+    from conftest import FakeMarket
+    data = {}
+    for t, (er, qt, name) in entries.items():
+        data[t] = {"quote": Quote(ticker=t, price=10, bid=None, ask=None, expense_ratio=er, nav=None,
+                                  quote_type=qt, avg_volume=None)}
+        if name is not None:
+            data[t]["info"] = {"longName": name}
+    return FakeMarket(data)
+
+
+def test_compliance_flags_held_fund_over_fee_cap(three_k_portfolio):
+    m = _fund_market({"VTI": (0.0095, "ETF", "Pricey Total Market ETF"), "BND": (0.0003, "ETF", "Bond ETF")})
+    rep = compliance(*three_k_portfolio, Targets(), review=False, market=m)
+    assert rep.fund_flags == ["VTI: expense ratio 0.95% >= 0.90% cap"]
+
+
+def test_compliance_fund_flags_skip_equities_cash_and_unquotable(three_k_portfolio):
+    holdings, values = with_active(three_k_portfolio, "AAPL", 150.0, 450.0)
+    holdings = holdings + [make_holding("GONE", "bonds", 1)]
+    m = _fund_market({"VTI": (0.0003, "ETF", "Total Market ETF"), "BND": (0.0003, "ETF", "Bond ETF"),
+                      "AAPL": (None, "EQUITY", "Apple Inc")})
+    assert compliance(holdings, values, Targets(), review=False, market=m).fund_flags == []
+
+
+def test_compliance_fund_flags_missing_info_and_expense_ratio(three_k_portfolio):
+    m = _fund_market({"VTI": (None, "ETF", "Total Market ETF"), "BND": (0.0003, "ETF", None)})
+    rep = compliance(*three_k_portfolio, Targets(), review=False, market=m)
+    assert rep.fund_flags == ["VTI: expense ratio unavailable", "BND: instrument data unavailable"]
+
+
+def test_compliance_without_market_skips_fund_checks(three_k_portfolio):
+    assert compliance(*three_k_portfolio, Targets(), review=False).fund_flags == []

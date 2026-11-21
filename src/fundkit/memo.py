@@ -75,7 +75,8 @@ def _ids(label: str, ids: list[str]) -> str:
 def _action_line(p: Proposal) -> str:
     shares = f" ({_num(p.shares)} sh)" if p.shares is not None else ""
     tax = f" — est. tax ${p.est_tax:,.0f}" if p.est_tax is not None else ""
-    # build_actions pre-checks every proposal/sell against the IPS, so anything listed here passes.
+    # build_actions pre-checks every proposal/sell against the IPS (picks through the gate, index/bond ETF
+    # buys through check_instrument), so anything listed here passes.
     return f"- [ ] {p.action} — {p.ticker} — ${p.dollars:,.0f}{shares} — {p.reason} — IPS check: PASS{tax}"
 
 
@@ -111,7 +112,8 @@ def _attention(ctx: MemoContext) -> str:
 
 
 def _compliance_lines(c: ComplianceReport) -> list[str]:
-    flags = [*c.sleeve_flags, *([c.active_ceiling_flag] if c.active_ceiling_flag else []), *c.trim_flags]
+    flags = [*c.sleeve_flags, *([c.active_ceiling_flag] if c.active_ceiling_flag else []), *c.trim_flags,
+             *c.fund_flags]
     lines = [f"- {f}" for f in flags]
     if c.indexed_lt_active:
         lines.append("- indexed equity below active")

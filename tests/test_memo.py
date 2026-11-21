@@ -172,6 +172,13 @@ def test_compliance_flags_and_green():
     assert "All green." not in sec
 
 
+def test_fund_flags_listed_in_compliance_section():
+    c = ComplianceReport(fund_flags=["XYZ: expense ratio 0.95% >= 0.90% cap"])
+    sec = "\n".join(_section(render(_ctx(compliance=c)), 2))
+    assert "- XYZ: expense ratio 0.95% >= 0.90% cap" in sec
+    assert "All green." not in sec
+
+
 def test_reconcile_section():
     r = ReconcileResult(applied=["a1", "a2"], carried=["c1"], warnings=["thesis stale"])
     sec = "\n".join(_section(render(_ctx(reconcile=r)), 1))

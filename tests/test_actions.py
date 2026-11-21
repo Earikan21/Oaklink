@@ -16,8 +16,10 @@ PEERS = ["P1", "P2", "P3"]
 
 # ---------------------------------------------------------------- helpers
 def _q(ticker: str, price: float, bid: float | None = None, ask: float | None = None,
-       quote_type: str = "ETF") -> Quote:
-    return Quote(ticker=ticker, price=price, bid=bid, ask=ask, expense_ratio=None, nav=None,
+       quote_type: str = "ETF", expense_ratio: float | None = None) -> Quote:
+    if expense_ratio is None and quote_type == "ETF":
+        expense_ratio = 0.0003  # a compliant index fund unless a test says otherwise
+    return Quote(ticker=ticker, price=price, bid=bid, ask=ask, expense_ratio=expense_ratio, nav=None,
                  quote_type=quote_type, avg_volume=None)
 
 
@@ -53,6 +55,8 @@ def _market(prices: dict[str, float], candidates: tuple[str, ...] = (), held_his
         m.data["__screen__"] = PEERS
     for t, p in prices.items():
         m.data.setdefault(t, {})["quote"] = _q(t, p, quote_type="EQUITY" if t not in ("VTI", "BND") else "ETF")
+        if t in ("VTI", "BND"):
+            m.data[t].setdefault("info", {"longName": f"Vanguard {t} ETF"})
     for i, t in enumerate(held_hist):
         m.data[t]["history"] = _hist(100 + i, drift=0.001, start=50.0)
     return m
@@ -479,3 +483,43 @@ def test_watch_override_replaces_stored_watchlist(tmp_path, market_on_target):
     a = build_actions(s, market_on_target, Targets(), TODAY, review=True, watch=[_held(), _passed("ACME", 0.31)])
     assert _pairs(a.proposals) == [("SELL", "VTI", 150.0), ("BUY", "ACME", 150.0)]
     assert s.load_watchlist() == [_held(), stored]  # the override is never written back
+
+
+# ---------------------------------------------------------------- C1: fund instruments are IPS-checked
+def test_first_run_refuses_index_etf_that_fails_instrument_check(store_with_cash_3000):
+    m = _market({"VTI": 300.0, "BND": 75.0})
+    m.data["TQQQ"] = {"quote": _q("TQQQ", 50.0, expense_ratio=0.0095),
+                      "info": {"longName": "ProShares UltraPro QQQ"}}
+    a = build_actions(store_with_cash_3000, m, Targets(index_etf="TQQQ"), TODAY, review=False)
+    assert [(p.action, p.ticker) for p in a.proposals] == [("BUY", "BND")]
+    assert ("TQQQ fails IPS instrument check: expense ratio 0.95% >= 0.90% cap; "
+            "denied keyword 'ultra' (leveraged/inverse product) in name") in a.notes
+
+
+def test_first_run_instrument_data_unavailable_blocks_the_buy(store_with_cash_3000):
+    m = _market({"VTI": 300.0, "BND": 75.0})
+    del m.data["BND"]["info"]
+    a = build_actions(store_with_cash_3000, m, Targets(), TODAY, review=False)
+    assert [(p.action, p.ticker) for p in a.proposals] == [("BUY", "VTI")]
+    assert "BND fails IPS instrument check: instrument data unavailable" in a.notes
+
+
+def test_rebalance_buy_of_failing_index_etf_is_dropped(tmp_path):
+    # total 10_000: VTI 3000 / BND 3000 / CASH 4000 -> stocks 30%: rebalance would BUY VTI 2000
+    s = _store(tmp_path, [_lot("VTI", "indexed_equity", 30, 90.0), _lot("BND", "bonds", 40, 75.0),
+                          _lot("CASH", "cash", 4000.0)])
+    m = _market({"VTI": 100.0, "BND": 75.0})
+    m.data["VTI"]["quote"] = _q("VTI", 100.0, expense_ratio=None, quote_type="MUTUALFUND")
+    a = build_actions(s, m, Targets(), TODAY, review=False)
+    assert all(p.ticker != "VTI" for p in a.proposals)
+    assert "VTI fails IPS instrument check: expense ratio unavailable" in a.notes
+    assert a.compliance.fund_flags == ["VTI: expense ratio unavailable"]
+
+
+def test_compliance_in_action_set_carries_fund_flags(tmp_path):
+    s = _store(tmp_path, [_lot("VTI", "indexed_equity", 50, 90.0), _lot("BND", "bonds", 40, 75.0),
+                          _lot("CASH", "cash", 2000.0)])
+    m = _market({"VTI": 100.0, "BND": 75.0})
+    m.data["BND"]["quote"] = _q("BND", 75.0, expense_ratio=0.0095)
+    a = build_actions(s, m, Targets(), TODAY, review=False)
+    assert a.compliance.fund_flags == ["BND: expense ratio 0.95% >= 0.90% cap"]

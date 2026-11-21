@@ -11,7 +11,7 @@ from datetime import date, timedelta
 
 from pydantic import BaseModel
 
-from fundkit.ips import ComplianceReport, compliance
+from fundkit.ips import ComplianceReport, compliance, instrument_violations
 from fundkit.market import MarketData, MarketUnavailable
 from fundkit.models import Holding, LedgerRow, Sleeve, Targets, WatchItem
 from fundkit.portfolio import (CASH_TICKER, EPS, Proposal, rebalance_proposals, value_holdings,
@@ -132,6 +132,23 @@ def _first_run(holdings: list[Holding], market: MarketData, targets: Targets, to
     ]
 
 
+def _screen_fund_buys(proposals: list[Proposal], market: MarketData, targets: Targets,
+                      notes: list[str]) -> list[Proposal]:
+    """Drop every BUY of the index/bond ETF that fails `check_instrument` (one note per ticker)."""
+    violations: dict[str, list[str]] = {}
+    kept: list[Proposal] = []
+    for p in proposals:
+        if p.action == "BUY" and p.ticker in (targets.index_etf, targets.bond_etf):
+            if p.ticker not in violations:
+                violations[p.ticker] = instrument_violations(p.ticker, market, targets)
+                if violations[p.ticker]:
+                    notes.append(f"{p.ticker} fails IPS instrument check: {'; '.join(violations[p.ticker])}")
+            if violations[p.ticker]:
+                continue
+        kept.append(p)
+    return kept
+
+
 def _warning_ages(ledger: list[LedgerRow], ticker: str, today: date) -> list[int]:
     return [(today - r.date).days for r in ledger
             if r.action == "NOTE" and r.rationale == f"thesis_warning:{ticker}"]
@@ -149,7 +166,7 @@ def build_actions(store: Store, market: MarketData, targets: Targets, today: dat
 
     values, unpriced = value_holdings(holdings, market)
     total = sum(values.values())
-    report = compliance(holdings, values, targets, review, unpriced)
+    report = compliance(holdings, values, targets, review, unpriced, market=market)
     out = ActionSet(compliance=report, notes=notes, unpriced=unpriced, values=values, total=total)
     notes = out.notes  # pydantic copies list inputs; append to the model's own list from here on
 
@@ -157,7 +174,7 @@ def build_actions(store: Store, market: MarketData, targets: Targets, today: dat
         notes.append("portfolio has no value; nothing to propose")
         return out
     if all(h.ticker == CASH_TICKER for h in holdings):
-        out.proposals = _first_run(holdings, market, targets, total)
+        out.proposals = _screen_fund_buys(_first_run(holdings, market, targets, total), market, targets, notes)
         return out
 
     prices = _prices(holdings, market, targets, unpriced, notes)
@@ -212,6 +229,7 @@ def build_actions(store: Store, market: MarketData, targets: Targets, today: dat
     except ValueError as e:
         notes.append(f"rebalance skipped: {e}")
         rebalance = []
+    rebalance = _screen_fund_buys(rebalance, market, targets, notes)
     out.proposals.extend(rebalance)
     for p in rebalance:
         book.move(p.action, p.ticker, p.dollars, book.sleeve_of(p.ticker) or

@@ -17,9 +17,17 @@ TODAY = d(0)  # 2026-11-29
 
 
 # ---------------------------------------------------------------- helpers
-def _q(ticker, price, quote_type="ETF", nav=None, bid=None, ask=None) -> Quote:
-    return Quote(ticker=ticker, price=price, bid=bid, ask=ask, expense_ratio=None, nav=nav,
+def _q(ticker, price, quote_type="ETF", nav=None, bid=None, ask=None, expense_ratio=None) -> Quote:
+    if expense_ratio is None and quote_type == "ETF":
+        expense_ratio = 0.0003  # a compliant index fund unless a test says otherwise
+    return Quote(ticker=ticker, price=price, bid=bid, ask=ask, expense_ratio=expense_ratio, nav=nav,
                  quote_type=quote_type, avg_volume=None)
+
+
+def _etf(ticker, price, **kw) -> dict:
+    """Quote + info + flat 300-day history for a compliant fund."""
+    return {"quote": _q(ticker, price, **kw), "info": {"longName": f"Vanguard {ticker} ETF"},
+            "history": make_history(price, 300)}
 
 
 def _lot(ticker, sleeve, shares, cost=1.0, when=d(-7)) -> Holding:
@@ -33,10 +41,7 @@ def _snap(when: date, total=3000.0) -> Snapshot:
 
 def _base_data(vti_nav=None) -> dict:
     """VTI 300 / BND 75 with flat 300-day histories (enough for the benchmark)."""
-    return {
-        "VTI": {"quote": _q("VTI", 300.0, nav=vti_nav), "history": make_history(300.0, 300)},
-        "BND": {"quote": _q("BND", 75.0), "history": make_history(75.0, 300)},
-    }
+    return {"VTI": _etf("VTI", 300.0, nav=vti_nav), "BND": _etf("BND", 75.0)}
 
 
 def _files(root) -> dict:
@@ -183,11 +188,7 @@ def store_trim(tmp_path):
 
 @pytest.fixture
 def market_trim():
-    data = {
-        "VTI": {"quote": _q("VTI", 100.0), "history": make_history(100.0, 300)},
-        "BND": {"quote": _q("BND", 75.0), "history": make_history(75.0, 300)},
-        "ACME": {"quote": _q("ACME", 50.0, "EQUITY")},
-    }
+    data = {"VTI": _etf("VTI", 100.0), "BND": _etf("BND", 75.0), "ACME": {"quote": _q("ACME", 50.0, "EQUITY")}}
     return FakeMarket(data)
 
 
@@ -288,8 +289,7 @@ def _acme_mkt(price: float, earnings=None, history=None, info_overrides=None) ->
         m.data["ACME"]["earnings_dates"] = earnings
     if history is not None:
         m.data["ACME"]["history"] = history
-    m.data.update({"VTI": {"quote": _q("VTI", 100.0), "history": make_history(100.0, 300)},
-                   "BND": {"quote": _q("BND", 75.0), "history": make_history(75.0, 300)}})
+    m.data.update({"VTI": _etf("VTI", 100.0), "BND": _etf("BND", 75.0)})
     return m
 
 
@@ -549,3 +549,16 @@ def test_dedupe_counts_todays_rows_of_any_response(store_with_cash_3000, fake_ma
     weekly_run(store_with_cash_3000, fake_market_basic, TODAY, dry_run=False)
     rows = store_with_cash_3000.load_ledger()
     assert [(x.id, x.response) for x in rows if x.ticker == "VTI"] == [("20261129-01-BUY-VTI", "applied")]
+
+
+# ---------------------------------------------------------------- C1: held funds flagged in the memo
+def test_held_fund_over_fee_cap_is_flagged_in_memo_section_2(tmp_path):
+    data = _base_data()
+    data["BND"]["quote"] = _q("BND", 75.0, expense_ratio=0.0095)
+    s = _store(tmp_path, [_lot("VTI", "indexed_equity", 5, 300.0), _lot("BND", "bonds", 12, 75.0),
+                          _lot("CASH", "cash", 600.0)])
+    r = weekly_run(s, FakeMarket(data), TODAY, dry_run=True)
+    assert r.context.compliance.fund_flags == ["BND: expense ratio 0.95% >= 0.90% cap"]
+    sec2 = r.memo_md.split("## 2. IPS compliance")[1].split("## 3.")[0]
+    assert "- BND: expense ratio 0.95% >= 0.90% cap" in sec2
+    assert "All green." not in sec2
