@@ -41,7 +41,7 @@ def reconcile(store: Store, today: date) -> ReconcileResult:
             if (today - row.date).days > PENDING_MAX_AGE_DAYS:
                 ledger[i] = row.model_copy(update={"response": "skipped"})
                 result.dropped.append(row.id)
-            else:
+            elif row.date < today:  # today's own proposals (a same-day re-run) are not "carried"
                 result.carried.append(row.id)
         elif row.response == "done" and row.action in ("BUY", "SELL"):
             if row.fill_shares is None or row.fill_price is None:

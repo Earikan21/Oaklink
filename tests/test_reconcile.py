@@ -133,3 +133,11 @@ def test_corrupt_watchlist_is_left_untouched_and_warned(tmp_path):
     assert r.warnings == ["watchlist unavailable: ValidationError; held status not updated"]
     assert (tmp_path / "watchlist.csv").read_bytes() == corrupt
     assert {h.ticker for h in s.load_holdings()} == {"CASH", "ACME"}
+
+
+def test_todays_own_pending_rows_are_not_carried(store_with_cash_3000):
+    s = store_with_cash_3000
+    s.append_ledger([row("old", -7, "BUY", "BND", amount=900), row("new", 0, "BUY", "VTI", amount=1500)])
+    r = reconcile(s, today=d(0))
+    assert r.carried == ["old"] and r.dropped == []
+    assert [x.response for x in s.load_ledger()] == ["pending", "pending"]

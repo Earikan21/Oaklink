@@ -31,11 +31,12 @@ Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
    itself:
    `unzip -o <TOOLKIT_ZIP_PATH> -d toolkit && pip install toolkit/fundkit-*.whl --break-system-packages`
 
-3. **Run the cycle (live).**
-   `fundkit run --data ./data --today <today> --out memo.md --json run.json`
+3. **Preview the cycle (dry run).**
+   `fundkit run --data ./data --today <today> --dry-run --json run.json --out memo.md`
    The run first reconciles the Decision Ledger: rows Emmet marked `done` (with `fill_shares` and
    `fill_price`) become `applied` and update Holdings; `skipped` rows are closed. Chat replies never reach
-   a scheduled run, so the Sheet is the only channel. This live run is the one that writes to `data/`.
+   a scheduled run, so the Sheet is the only channel. Reconcile is the only thing a dry run writes, and it
+   is idempotent; nothing else is recorded yet.
 
 4. **Write the notes.** Read `run.json` (keys: `memo_md`, `review`, `written`, `actions`, `snapshot`) and
    `memo.md`. Write `notes.json`: a JSON object whose keys are the section numbers as strings and whose
@@ -43,12 +44,14 @@ Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
    `"3"` Index & bond sleeve, `"4"` Active sleeve, `"5"` Watchlist, `"6"` Actions, `"7"` Scorecard.
    (`"1"` and `"2"` are accepted but not needed.) Judgment only: what to watch, why a flag matters,
    what Emmet should look at. Use no number that does not appear in `run.json` or `memo.md`, and never
-   mention as a candidate any instrument that failed `check_instrument` (see `actions.gated`).
+   mention as a candidate any instrument that failed `check_instrument` (see `actions.gated`, and the
+   fund flags in section 2).
 
-5. **Re-render with notes.**
-   `fundkit run --data ./data --today <today> --dry-run --notes notes.json --out memo.md`
-   Same date, so this is idempotent: the live write already happened in step 3 and `--dry-run` writes
-   nothing further. Never pass a different date here.
+5. **Run the cycle (live).**
+   `fundkit run --data ./data --today <today> --notes notes.json --out memo.md --json run.json`
+   This live run is the one that writes to `data/` (ledger rows, snapshot, watchlist), and its `memo.md`
+   is the memo that is published. Same date as step 3, so it computes the same actions; a live run is
+   idempotent per day (re-running it adds no duplicate rows). Never pass a different date here.
 
 6. **Save the memo.** Save `memo.md` to the AI Fund project as `memos/<today>.md` (YYYY-MM-DD).
 
@@ -67,17 +70,18 @@ Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
 - Recommend an instrument the package flagged (failed `check_instrument` / gated).
 - Place, simulate, or "pretend-fill" a trade. Emmet executes everything himself and records fills in the Sheet.
 - Edit `targets.csv`. IPS changes are Emmet's: he edits the IPS, then the targets.
-- Skip step 7 after a successful step 3. An un-pushed run means next week reconciles against stale state.
-  (If step 3 failed you stop and do not push; see below.)
+- Skip step 7 after a successful step 5. An un-pushed run means next week reconciles against stale state.
+  (If step 3 or step 5 failed you stop and do not push; see below.)
 
 ## If something fails
 
-- If step 3 fails (exit 1 or 2), stop and do NOT push to the Sheet. The Sheet is unchanged and reconcile is
-  idempotent next week. Step 7 is mandatory only after a successful step 3.
+- If step 3 or step 5 fails (exit 1 or 2), stop and do NOT push to the Sheet. The Sheet is unchanged and
+  reconcile is idempotent next week. Step 7 is mandatory only after a successful step 5.
 - Exit code 2 (`error: data dir ... not found; run fundkit init first`): `fundkit init` was never run on
   this data directory. Stop and report; do not improvise.
 - Exit code 1 (`error: ...` on stderr; market data or value error): market data is unavailable. Report it.
   Retry at most once.
-- A malformed `notes.json` gives exit 1 in step 5: fix the JSON; do not retry the run.
-- The memo rendered but contains notes such as "benchmark unavailable": deliver it anyway (steps 5 to 8)
+- A malformed `notes.json` gives exit 1 in step 5 before anything is written: fix the JSON and run step 5
+  again with the same date.
+- The memo rendered but contains notes such as "benchmark unavailable": deliver it anyway (steps 4 to 8)
   and say so in the chat summary.
