@@ -115,3 +115,21 @@ def test_index_etf_on_watchlist_is_still_indexed_equity(store_with_cash_3000):
     reconcile(s, today=d(0))
     assert holdings(s)["VTI"].sleeve == "indexed_equity"
     assert s.load_watchlist()[0].status == "held"
+
+
+def test_corrupt_watchlist_is_left_untouched_and_warned(tmp_path):
+    from fundkit.models import Holding, LedgerRow
+    from fundkit.store import Store
+
+    s = Store(tmp_path)
+    s.init()
+    s.save_holdings([Holding(ticker="CASH", sleeve="cash", shares=1000.0, cost_basis=1.0, lot_date=d(-7))])
+    s.save_ledger([LedgerRow(id="b1", date=d(-3), action="BUY", ticker="ACME", amount=500, rationale="x",
+                             ips_check="PASS", response="done", fill_shares=10, fill_price=50.0)])
+    corrupt = b"ticker,thesis,last_valued,fair_value,upside,status\nACME,t,notadate,1,1,candidate\n"
+    (tmp_path / "watchlist.csv").write_bytes(corrupt)
+    r = reconcile(s, today=d(0))
+    assert r.applied == ["b1"]
+    assert r.warnings == ["watchlist unavailable: ValidationError; held status not updated"]
+    assert (tmp_path / "watchlist.csv").read_bytes() == corrupt
+    assert {h.ticker for h in s.load_holdings()} == {"CASH", "ACME"}

@@ -96,9 +96,12 @@ def test_first_run_is_not_review(store_with_cash_3000, fake_market_basic):
     assert weekly_run(store_with_cash_3000, fake_market_basic, TODAY, dry_run=True).review is False
 
 
-@pytest.mark.parametrize("force", [True, False])
-def test_force_review_overrides_cadence(store_with_4_snapshots, fake_market_basic, force):
-    assert weekly_run(store_with_4_snapshots, fake_market_basic, TODAY, dry_run=True, force_review=force).review is force
+def test_force_review_true_overrides_non_review_run(store_with_4_snapshots, fake_market_basic):
+    assert weekly_run(store_with_4_snapshots, fake_market_basic, TODAY, dry_run=True, force_review=True).review is True
+
+
+def test_force_review_false_overrides_review_run(store_with_5_snapshots, fake_market_basic):
+    assert weekly_run(store_with_5_snapshots, fake_market_basic, TODAY, dry_run=True, force_review=False).review is False
 
 
 def test_inception_is_first_performance_row(store_with_5_snapshots, fake_market_basic, monkeypatch):
@@ -494,3 +497,55 @@ def test_benchmark_fallback_reports_sleeves_and_unpriced(tmp_path):
     snap = r.snapshot
     assert (snap.total, snap.indexed_equity, snap.bonds, snap.active, snap.cash) == (3000.0, 1500.0, 900.0, 0.0, 600.0)
     assert snap.unpriced == "ACME"
+
+
+# ---------------------------------------------------------------- unreadable tables
+CORRUPT_WATCH = b"ticker,thesis,last_valued,fair_value,upside,status\nACME,t,notadate,1,1,held\n"
+
+
+@pytest.fixture
+def store_corrupt_watchlist(store_with_cash_3000):
+    (store_with_cash_3000.root / "watchlist.csv").write_bytes(CORRUPT_WATCH)
+    return store_with_cash_3000
+
+
+@pytest.mark.parametrize("review", [True, False])
+def test_corrupt_watchlist_dry_run_still_renders(store_corrupt_watchlist, fake_market_basic, review):
+    r = weekly_run(store_corrupt_watchlist, fake_market_basic, TODAY, dry_run=True, force_review=review)
+    assert "watchlist unavailable: ValidationError" in r.actions.notes
+    assert "- watchlist unavailable: ValidationError" in r.memo_md
+    assert r.context.watch_summary == []
+    assert "- [ ] BUY — VTI — $1,500 — initial allocation — IPS check: PASS" in r.memo_md
+    assert (store_corrupt_watchlist.root / "watchlist.csv").read_bytes() == CORRUPT_WATCH
+
+
+def test_corrupt_watchlist_live_run_leaves_file_and_writes_the_rest(store_corrupt_watchlist, fake_market_basic):
+    r = weekly_run(store_corrupt_watchlist, fake_market_basic, TODAY, dry_run=False, force_review=True)
+    assert r.written is True
+    assert (store_corrupt_watchlist.root / "watchlist.csv").read_bytes() == CORRUPT_WATCH
+    assert [x.id for x in store_corrupt_watchlist.load_ledger()] == ["20261129-01-BUY-VTI", "20261129-02-BUY-BND"]
+    assert store_corrupt_watchlist.load_performance() == [r.snapshot]
+
+
+def test_write_with_unreadable_ledger_still_appends(store_with_cash_3000, fake_market_basic):
+    r = weekly_run(store_with_cash_3000, fake_market_basic, TODAY, dry_run=True)
+    ledger = store_with_cash_3000.root / "ledger.csv"
+    corrupt = ledger.read_bytes() + b"bad,notadate,BUY,VTI,1,x,PASS,pending,,,\n"
+    ledger.write_bytes(corrupt)
+    run_mod._write(store_with_cash_3000, r.actions, r.snapshot, [], TODAY, [])
+    assert "ledger unavailable: ValidationError" in r.actions.notes
+    lines = ledger.read_bytes().splitlines()
+    assert ledger.read_bytes().startswith(corrupt)
+    assert [ln.split(b",")[0] for ln in lines[-2:]] == [b"20261129-01-BUY-VTI", b"20261129-02-BUY-BND"]
+    assert store_with_cash_3000.load_performance() == [r.snapshot]
+
+
+def test_dedupe_counts_todays_rows_of_any_response(store_with_cash_3000, fake_market_basic):
+    """Emmet filled today's BUY VTI and re-ran the same day: reconcile applies it and no new BUY VTI row is added."""
+    filled = LedgerRow(id="20261129-01-BUY-VTI", date=TODAY, action="BUY", ticker="VTI", amount=1500,
+                       rationale="initial allocation", ips_check="PASS", response="done", fill_shares=0.5,
+                       fill_price=300.0)
+    store_with_cash_3000.save_ledger([filled])
+    weekly_run(store_with_cash_3000, fake_market_basic, TODAY, dry_run=False)
+    rows = store_with_cash_3000.load_ledger()
+    assert [(x.id, x.response) for x in rows if x.ticker == "VTI"] == [("20261129-01-BUY-VTI", "applied")]

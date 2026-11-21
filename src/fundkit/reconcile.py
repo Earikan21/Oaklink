@@ -22,7 +22,11 @@ def reconcile(store: Store, today: date) -> ReconcileResult:
     result = ReconcileResult()
     ledger = store.load_ledger()
     holdings = store.load_holdings()
-    watchlist = store.load_watchlist()
+    try:
+        watchlist = store.load_watchlist()
+    except Exception as e:  # leave a corrupt file untouched for manual recovery; fills still apply
+        watchlist = None
+        result.warnings.append(f"watchlist unavailable: {type(e).__name__}; held status not updated")
     targets = store.load_targets()
 
     def sleeve_for(ticker: str) -> str:
@@ -47,7 +51,7 @@ def reconcile(store: Store, today: date) -> ReconcileResult:
             if row.action == "BUY":
                 holdings.append(Holding(ticker=row.ticker, sleeve=sleeve_for(row.ticker), shares=row.fill_shares,
                                         cost_basis=row.fill_price, lot_date=row.date))
-                for w in watchlist:
+                for w in watchlist or []:
                     if w.ticker == row.ticker:
                         w.status = "held"
                 _adjust_cash(holdings, -proceeds, row)
@@ -63,7 +67,8 @@ def reconcile(store: Store, today: date) -> ReconcileResult:
 
     store.save_holdings(holdings)
     store.save_ledger(ledger)
-    store.save_watchlist(watchlist)
+    if watchlist is not None:
+        store.save_watchlist(watchlist)
     return result
 
 

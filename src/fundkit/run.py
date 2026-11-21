@@ -15,7 +15,7 @@ Held-name revaluations and the review-run watchlist refresh happen in memory BEF
 (passed via its `watch` argument), so thesis sells and picks use this run's valuations; the watchlist is
 saved only on a live run.
 
-A live run is idempotent per day: pending ledger rows whose (action, ticker) already has a pending row
+A live run is idempotent per day: ledger rows whose (action, ticker) already has a row of any response
 dated today, and a second snapshot for today, are not appended again. The run number (for the review
 cadence) is 1 + the number of snapshots not dated today, so a snapshot already recorded today does not
 count and a same-day re-render keeps its review flag.
@@ -31,6 +31,7 @@ from fundkit.models import Holding, LedgerRow, Snapshot, Targets, WatchItem
 from fundkit.performance import snapshot
 from fundkit.portfolio import CASH_TICKER, name_weights, value_holdings
 from fundkit.reconcile import reconcile
+from fundkit.research.earnings import EarningsResult
 from fundkit.research.estimates import revision_summary
 from fundkit.research.etf import EtfPremium, premium
 from fundkit.research.valuation import value_company
@@ -73,7 +74,7 @@ def weekly_run(store: Store, market: MarketData, today: date, dry_run: bool = Fa
     # (4) this run's valuations, in memory: held-name revaluations, then the review-run refresh.
     #     Research notes are collected here and listed after build_actions' own notes.
     research_notes: list[str] = []
-    watch = store.load_watchlist()
+    watch, watch_ok = _load_guarded(store.load_watchlist, "watchlist", research_notes)
     active_rows, previews, recaps = _active_rows(holdings, values, watch, market, targets, today, research_notes)
     if review:
         try:
@@ -107,7 +108,7 @@ def weekly_run(store: Store, market: MarketData, today: date, dry_run: bool = Fa
 
     written = False
     if not dry_run:
-        _write(store, actions, snap, watch, today, performance)
+        _write(store, actions, snap, watch if watch_ok else None, today, performance)
         written = True
     return RunResult(memo_md=memo_md, actions=actions, snapshot=snap, review=review, written=written, context=ctx)
 
@@ -151,12 +152,13 @@ def _etf_rows(holdings: list[Holding], market: MarketData) -> tuple[list[tuple[s
 
 
 def _active_rows(holdings: list[Holding], values: dict[str, float], watch: list[WatchItem], market: MarketData,
-                 targets: Targets, today: date, notes: list[str]) -> tuple[list[ActiveRow], list[str], list]:
+                 targets: Targets, today: date,
+                 notes: list[str]) -> tuple[list[ActiveRow], list[str], list[EarningsResult]]:
     """One row per active ticker. Held WatchItems are revalued in place in `watch` when due."""
     weights = name_weights(holdings, values)
     rows: list[ActiveRow] = []
     previews: list[str] = []
-    recaps: list = []
+    recaps: list[EarningsResult] = []
     for t in sorted({h.ticker for h in holdings if h.sleeve == "active"}):
         change = _price_change(t, market, notes)
 
@@ -228,9 +230,21 @@ def _due(item: WatchItem, reported: bool, market: MarketData, targets: Targets, 
     return abs(price / (fv / (1 + up)) - 1) > targets.reval_move
 
 
-def _write(store: Store, actions: ActionSet, snap: Snapshot, watch: list[WatchItem], today: date,
+def _load_guarded(loader, name: str, notes: list[str]) -> tuple[list, bool]:
+    """(rows, True), or ([], False) with the note "<name> unavailable: <Type>" when the table is unreadable."""
+    try:
+        return loader(), True
+    except Exception as e:
+        notes.append(f"{name} unavailable: {_err(e)}")
+        return [], False
+
+
+def _write(store: Store, actions: ActionSet, snap: Snapshot, watch: list[WatchItem] | None, today: date,
            performance: list[Snapshot]) -> None:
-    already = {(r.action, r.ticker) for r in store.load_ledger() if r.response == "pending" and r.date == today}
+    """Persist a live run. `watch=None` (the watchlist could not be read) leaves the watchlist file untouched.
+    An unreadable ledger skips the same-day dedupe but still appends, so a rendered memo is never lost."""
+    ledger, _ = _load_guarded(store.load_ledger, "ledger", actions.notes)
+    already = {(r.action, r.ticker) for r in ledger if r.date == today}  # any response: a filled re-run too
     rows: list[LedgerRow] = []
     for i, p in enumerate([*actions.sells, *actions.proposals], start=1):
         if (p.action, p.ticker) in already:
@@ -241,4 +255,5 @@ def _write(store: Store, actions: ActionSet, snap: Snapshot, watch: list[WatchIt
     store.append_ledger(rows + list(actions.ledger_notes))
     if not any(s.date == today for s in performance):
         store.append_performance(snap)
-    store.save_watchlist(watch)
+    if watch is not None:
+        store.save_watchlist(watch)
