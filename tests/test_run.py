@@ -211,13 +211,28 @@ def test_two_live_runs_same_day_do_not_duplicate(store_with_5_snapshots, fake_ma
     assert r1.review is True and r2.review is True  # a same-day re-render keeps its run number
 
 
-def test_pending_row_from_an_earlier_day_does_not_block_today(store_with_cash_3000, fake_market_basic):
+def test_pending_row_from_an_earlier_day_holds_the_same_action(store_with_cash_3000, fake_market_basic):
     old = LedgerRow(id="20261127-01-BUY-VTI", date=d(-2), action="BUY", ticker="VTI", amount=1500,
                     rationale="initial allocation", ips_check="PASS")
     store_with_cash_3000.save_ledger([old])
-    weekly_run(store_with_cash_3000, fake_market_basic, TODAY, dry_run=False)
-    assert [x.id for x in store_with_cash_3000.load_ledger()] == [
-        "20261127-01-BUY-VTI", "20261129-01-BUY-VTI", "20261129-02-BUY-BND"]
+    r = weekly_run(store_with_cash_3000, fake_market_basic, TODAY, dry_run=False)
+    assert [x.id for x in store_with_cash_3000.load_ledger()] == ["20261127-01-BUY-VTI", "20261129-01-BUY-BND"]
+    assert "awaiting response: 20261127-01-BUY-VTI" in r.actions.notes
+    assert "- awaiting response: 20261127-01-BUY-VTI" in r.memo_md
+    assert "BUY — VTI" not in r.memo_md  # not offered twice
+
+
+def test_week_two_with_unfilled_week_one_rows_appends_nothing(store_with_cash_3000, fake_market_basic):
+    week1 = d(-7)
+    weekly_run(store_with_cash_3000, fake_market_basic, week1, dry_run=False)
+    rows = store_with_cash_3000.load_ledger()
+    assert [x.id for x in rows] == ["20261122-01-BUY-VTI", "20261122-02-BUY-BND"]
+    r = weekly_run(store_with_cash_3000, fake_market_basic, TODAY, dry_run=False)
+    assert store_with_cash_3000.load_ledger() == rows
+    assert r.context.reconcile.carried == ["20261122-01-BUY-VTI", "20261122-02-BUY-BND"]
+    assert "Carried: 2 (20261122-01-BUY-VTI, 20261122-02-BUY-BND)" in r.memo_md
+    assert {"awaiting response: 20261122-01-BUY-VTI", "awaiting response: 20261122-02-BUY-BND"} <= set(r.actions.notes)
+    assert r.actions.proposals == []
 
 
 def test_ledger_notes_written_on_live_run_only(store_with_cash_3000, fake_market_basic, monkeypatch):

@@ -15,6 +15,9 @@ Held-name revaluations and the review-run watchlist refresh happen in memory BEF
 (passed via its `watch` argument), so thesis sells and picks use this run's valuations; the watchlist is
 saved only on a live run.
 
+A sell/proposal whose (action, ticker) still has a `pending` row from an earlier day is withdrawn before the
+memo is rendered, with the note "awaiting response: <id>" (see `_hold_awaiting`).
+
 A live run is idempotent per day: ledger rows whose (action, ticker) already has a row of any response
 dated today, and a second snapshot for today, are not appended again. The run number (for the review
 cadence) is 1 + the number of snapshots not dated today, so a snapshot already recorded today does not
@@ -84,6 +87,7 @@ def weekly_run(store: Store, market: MarketData, today: date, dry_run: bool = Fa
 
     # (5) actions on this run's watchlist (also carries the compliance report used by the memo)
     actions = build_actions(store, market, targets, today, review, watch=watch)
+    _hold_awaiting(store, actions, today)
     notes = actions.notes
     notes.extend(research_notes)
 
@@ -111,6 +115,33 @@ def weekly_run(store: Store, market: MarketData, today: date, dry_run: bool = Fa
         _write(store, actions, snap, watch if watch_ok else None, today, performance)
         written = True
     return RunResult(memo_md=memo_md, actions=actions, snapshot=snap, review=review, written=written, context=ctx)
+
+
+def _hold_awaiting(store: Store, actions: ActionSet, today: date) -> None:
+    """Withdraw any sell/proposal whose (action, ticker) still has a `pending` ledger row from an earlier day:
+    Emmet has not answered it yet, so it is neither offered again nor recorded twice. Each withdrawal leaves
+    the note "awaiting response: <id>"; the id is also listed as carried in section 1. An unreadable ledger
+    withdraws nothing (build_actions has already noted it)."""
+    try:
+        ledger = store.load_ledger()
+    except Exception:
+        return
+    waiting: dict[tuple[str, str], LedgerRow] = {}
+    for r in ledger:
+        if r.response == "pending" and r.date < today:
+            waiting.setdefault((r.action, r.ticker), r)
+
+    def keep(p) -> bool:
+        row = waiting.get((p.action, p.ticker))
+        if row is None:
+            return True
+        note = f"awaiting response: {row.id}"
+        if note not in actions.notes:
+            actions.notes.append(note)
+        return False
+
+    actions.sells = [p for p in actions.sells if keep(p)]
+    actions.proposals = [p for p in actions.proposals if keep(p)]
 
 
 def _fallback_snapshot(holdings: list[Holding], values: dict[str, float], unpriced: list[str],
