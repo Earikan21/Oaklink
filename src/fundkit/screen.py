@@ -1,5 +1,6 @@
 """Graham-style universe screen, quality filter, buy gate, and watchlist refresh."""
 import math
+from collections.abc import Iterable
 from datetime import date
 
 import pandas as pd
@@ -13,7 +14,9 @@ from fundkit.research.correlation import max_corr_with
 from fundkit.research.valuation import Valuation, value_company
 
 UNIVERSE_QUERY = {"region": "us", "marketcap_gt": 2e9, "pe_lt": 20, "de_lt": 1.0, "eps_growth_5y_gt": 0}
-STALE_DAYS = 42
+STALE_DAYS = 42  # one review cycle (6 weekly runs): a valuation this old is stale
+SEED_CAP = 10
+SEED_THESIS = "screen: Graham universe"
 MAX_PEERS = 5
 SPREAD_DECIMALS = 10  # absorb float noise so a spread of exactly max_spread is not "below" it
 
@@ -156,17 +159,19 @@ def _needs_revalue(item: WatchItem, market: MarketData, targets: Targets, today:
         return True
     if item.fair_value <= 0 or 1 + item.upside <= 0:
         return True  # cannot derive a price at valuation; revalue instead of dividing
-    if (today - item.last_valued).days > STALE_DAYS:
+    if (today - item.last_valued).days >= STALE_DAYS:
         return True
     price_then = item.fair_value / (1 + item.upside)
     return abs(market.quote(item.ticker).price / price_then - 1) > targets.reval_move
 
 
-def refresh_watchlist(watch: list[WatchItem], market: MarketData, targets: Targets, today: date) -> list[WatchItem]:
+def refresh_watchlist(watch: list[WatchItem], market: MarketData, targets: Targets, today: date,
+                      force: bool = False) -> list[WatchItem]:
+    """Revalue stale or moved items (`force`: every item). A failed valuation keeps the item unchanged."""
     out: list[WatchItem] = []
     for item in watch:
         try:
-            if not _needs_revalue(item, market, targets, today):
+            if not force and not _needs_revalue(item, market, targets, today):
                 out.append(item.model_copy())
                 continue
             v = value_company(item.ticker, market, peers_for(item.ticker, market))
@@ -178,4 +183,31 @@ def refresh_watchlist(watch: list[WatchItem], market: MarketData, targets: Targe
             status = "passed" if v.upside >= targets.min_upside else "candidate"
         out.append(item.model_copy(update={"fair_value": v.blended, "upside": v.upside,
                                            "last_valued": today, "status": status}))
+    return out
+
+
+def seed_candidates(watch: list[WatchItem], market: MarketData, targets: Targets, cap: int = SEED_CAP, *,
+                    held: Iterable[str] = ()) -> list[WatchItem]:
+    """Top up the watchlist to `cap` items with screened names that pass `quality_ok`, as candidates.
+
+    Skips names already on the watchlist, `held` tickers and the index/bond ETF. A quality check that errors
+    skips that name; a universe (screener) failure propagates for the caller to note. Returns a new list.
+    """
+    out = list(watch)
+    if len(out) >= cap:
+        return out
+    skip = {w.ticker for w in watch} | set(held) | {targets.index_etf, targets.bond_etf}
+    for ticker in universe(market):
+        if len(out) >= cap:
+            break
+        if ticker in skip:
+            continue
+        skip.add(ticker)
+        try:
+            ok, _ = quality_ok(ticker, market)
+        except Exception:
+            continue
+        if ok:
+            out.append(WatchItem(ticker=ticker, thesis=SEED_THESIS, last_valued=None, fair_value=None,
+                                 upside=None, status="candidate"))
     return out

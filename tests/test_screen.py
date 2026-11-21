@@ -9,7 +9,7 @@ import fundkit.screen as screen_mod
 from fundkit.market import MarketUnavailable
 from fundkit.models import Quote, Targets, WatchItem
 from fundkit.screen import (UNIVERSE_QUERY, GateResult, gate, peers_for, quality_ok,
-                            refresh_watchlist, universe)
+                            refresh_watchlist, seed_candidates, universe)
 
 TARGETS = Targets()
 TODAY = date(2026, 11, 29)
@@ -254,11 +254,19 @@ def test_refresh_marks_candidate_at_010():
 
 
 def test_refresh_stale_by_age_boundary():
+    # 42 days = six weekly runs = one review cycle: a valuation from the last review is stale at this one
     m = _refresh_market(32.0)
+    at41 = _watch(last=TODAY - timedelta(days=41))
     at42 = _watch(last=TODAY - timedelta(days=42))
-    at43 = _watch(last=TODAY - timedelta(days=43))
-    assert refresh_watchlist([at42], m, TARGETS, TODAY)[0] == at42
-    assert refresh_watchlist([at43], m, TARGETS, TODAY)[0].last_valued == TODAY
+    assert refresh_watchlist([at41], m, TARGETS, TODAY)[0] == at41
+    assert refresh_watchlist([at42], m, TARGETS, TODAY)[0].last_valued == TODAY
+
+
+def test_refresh_force_revalues_fresh_items():
+    m = _refresh_market(32.0)
+    fresh = _watch(last=TODAY - timedelta(days=1))
+    assert refresh_watchlist([fresh], m, TARGETS, TODAY)[0] == fresh
+    assert refresh_watchlist([fresh], m, TARGETS, TODAY, force=True)[0].last_valued == TODAY
 
 
 def test_refresh_preserves_held_and_rejected_status():
@@ -398,3 +406,49 @@ def test_refresh_nonpositive_fair_value_revalues():
     m = _refresh_market(33.29)
     [out] = refresh_watchlist([_watch(fair=0.0, upside=0.25)], m, TARGETS, TODAY)
     assert out.last_valued == TODAY
+
+
+# ---------------------------------------------------------------- seed_candidates
+def _seed_market(universe_: list[str], bad: tuple[str, ...] = (), broken: tuple[str, ...] = ()) -> FakeMarket:
+    data: dict = {"__screen__": list(universe_)}
+    for t in universe_:
+        fcf = -5.0 if t in bad else 10.0
+        data[t] = {"cashflow": pd.DataFrame({"2025-12-31": [fcf]}, index=["Free Cash Flow"]),
+                   "info": {"debtToEquity": 50.0}}
+        if t in broken:
+            del data[t]["cashflow"]  # MarketUnavailable
+    return FakeMarket(data)
+
+
+def _cand(t):
+    return WatchItem(ticker=t, thesis="screen: Graham universe", last_valued=None, fair_value=None, upside=None,
+                     status="candidate")
+
+
+def test_seed_candidates_appends_quality_names_up_to_cap():
+    watch = [_watch("OLD1"), _watch("OLD2")]
+    m = _seed_market(["N1", "N2", "N3", "N4"])
+    out = seed_candidates(watch, m, TARGETS, cap=4)
+    assert out == watch + [_cand("N1"), _cand("N2")]
+    assert len(watch) == 2  # input not mutated
+
+
+def test_seed_candidates_skips_existing_held_index_and_failing_quality():
+    watch = [_watch("OLD")]
+    m = _seed_market(["OLD", "HELD", "VTI", "BAD", "GONE", "N1"], bad=("BAD",), broken=("GONE",))
+    out = seed_candidates(watch, m, TARGETS, cap=10, held=["HELD"])
+    assert [w.ticker for w in out] == ["OLD", "N1"]
+
+
+def test_seed_candidates_at_or_over_cap_adds_nothing():
+    watch = [_watch(f"W{i}") for i in range(10)]
+    m = _seed_market(["N1"])
+    assert seed_candidates(watch, m, TARGETS) == watch
+
+
+def test_seed_candidates_universe_failure_propagates():
+    class Down(FakeMarket):
+        def screen(self, query):
+            raise RuntimeError("screener down")
+    with pytest.raises(RuntimeError):
+        seed_candidates([], Down({}), TARGETS)

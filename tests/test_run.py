@@ -577,3 +577,51 @@ def test_held_fund_over_fee_cap_is_flagged_in_memo_section_2(tmp_path):
     sec2 = r.memo_md.split("## 2. IPS compliance")[1].split("## 3.")[0]
     assert "- BND: expense ratio 0.95% >= 0.90% cap" in sec2
     assert "All green." not in sec2
+
+
+# ---------------------------------------------------------------- I7: review runs revalue everything and seed
+def test_review_run_revalues_held_name_even_without_move(store_active_acme_valued_last_week, fake_market_acme_up_10):
+    r = weekly_run(store_active_acme_valued_last_week, fake_market_acme_up_10, TODAY, dry_run=True,
+                   force_review=True)
+    assert r.context.active_rows[0].fair_value != 75.0
+    assert r.context.watch_summary[0].last_valued == TODAY
+
+
+def test_review_run_seeds_then_force_refreshes(store_with_candidate, monkeypatch):
+    calls = []
+
+    def seed(watch, market, targets, cap=10, *, held=()):
+        calls.append(("seed", [w.ticker for w in watch], set(held)))
+        return watch + [WatchItem(ticker="NEW", thesis="screen: Graham universe", last_valued=None,
+                                  fair_value=None, upside=None, status="candidate")]
+
+    def refresh(watch, market, targets, today, force=False):
+        calls.append(("refresh", [w.ticker for w in watch], force))
+        return watch
+
+    monkeypatch.setattr(run_mod, "seed_candidates", seed)
+    monkeypatch.setattr(run_mod, "refresh_watchlist", refresh)
+    r = weekly_run(store_with_candidate, _market_with_acme_candidate(), TODAY, dry_run=True, force_review=True)
+    assert calls == [("seed", ["ACME"], {"CASH"}), ("refresh", ["ACME", "NEW"], True)]
+    assert [w.ticker for w in r.context.watch_summary] == ["ACME", "NEW"]
+
+    calls.clear()
+    weekly_run(store_with_candidate, _market_with_acme_candidate(), TODAY, dry_run=True, force_review=False)
+    assert calls == []
+
+
+def test_seeding_failure_becomes_note(store_with_candidate, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("screener down")
+
+    monkeypatch.setattr(run_mod, "seed_candidates", boom)
+    r = weekly_run(store_with_candidate, _market_with_acme_candidate(), TODAY, dry_run=True, force_review=True)
+    assert "watchlist seeding failed (RuntimeError)" in r.actions.notes
+    assert r.context.watch_summary[0].last_valued == TODAY  # refresh still ran
+
+
+def test_no_seeding_over_unreadable_watchlist(store_corrupt_watchlist, fake_market_basic, monkeypatch):
+    called = []
+    monkeypatch.setattr(run_mod, "seed_candidates", lambda *a, **k: called.append(1) or [])
+    weekly_run(store_corrupt_watchlist, fake_market_basic, TODAY, dry_run=True, force_review=True)
+    assert called == []

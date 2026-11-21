@@ -11,6 +11,8 @@ This is what the Saturday scheduled task calls. Two guarantees:
   store: it only records Emmet's own responses (fills, expired pending rows) from earlier weeks, and the
   rest of the run must see that state.
 
+On review runs every held name is revalued (whether or not it is due), the watchlist is topped up from the
+screened universe (`seed_candidates`) and then every item is revalued (`refresh_watchlist(force=True)`).
 Held-name revaluations and the review-run watchlist refresh happen in memory BEFORE `build_actions`
 (passed via its `watch` argument), so thesis sells and picks use this run's valuations; the watchlist is
 saved only on a live run.
@@ -38,7 +40,7 @@ from fundkit.research.earnings import EarningsResult
 from fundkit.research.estimates import revision_summary
 from fundkit.research.etf import EtfPremium, premium
 from fundkit.research.valuation import value_company
-from fundkit.screen import peers_for, refresh_watchlist
+from fundkit.screen import peers_for, refresh_watchlist, seed_candidates
 from fundkit.store import Store
 
 PRICE_CHANGE_SESSIONS = 5  # Close[-1] vs Close[-6]: one trading week
@@ -78,10 +80,16 @@ def weekly_run(store: Store, market: MarketData, today: date, dry_run: bool = Fa
     #     Research notes are collected here and listed after build_actions' own notes.
     research_notes: list[str] = []
     watch, watch_ok = _load_guarded(store.load_watchlist, "watchlist", research_notes)
-    active_rows, previews, recaps = _active_rows(holdings, values, watch, market, targets, today, research_notes)
+    active_rows, previews, recaps = _active_rows(holdings, values, watch, market, targets, today, research_notes,
+                                                 force=review)
     if review:
+        if watch_ok:  # never seed over a watchlist that could not be read (it would not be saved anyway)
+            try:
+                watch = seed_candidates(watch, market, targets, held={h.ticker for h in holdings})
+            except Exception as e:
+                research_notes.append(f"watchlist seeding failed ({_err(e)})")
         try:
-            watch = refresh_watchlist(watch, market, targets, today)
+            watch = refresh_watchlist(watch, market, targets, today, force=True)
         except Exception as e:
             research_notes.append(f"watchlist refresh failed ({_err(e)}); kept last week's values")
 
@@ -183,9 +191,9 @@ def _etf_rows(holdings: list[Holding], market: MarketData) -> tuple[list[tuple[s
 
 
 def _active_rows(holdings: list[Holding], values: dict[str, float], watch: list[WatchItem], market: MarketData,
-                 targets: Targets, today: date,
-                 notes: list[str]) -> tuple[list[ActiveRow], list[str], list[EarningsResult]]:
-    """One row per active ticker. Held WatchItems are revalued in place in `watch` when due."""
+                 targets: Targets, today: date, notes: list[str],
+                 force: bool = False) -> tuple[list[ActiveRow], list[str], list[EarningsResult]]:
+    """One row per active ticker. Held WatchItems are revalued in place in `watch` when due (`force`: always)."""
     weights = name_weights(holdings, values)
     rows: list[ActiveRow] = []
     previews: list[str] = []
@@ -216,7 +224,7 @@ def _active_rows(holdings: list[Holding], values: dict[str, float], watch: list[
             recaps.append(recent)
 
         i = next((k for k, w in enumerate(watch) if w.ticker == t and w.status == "held"), None)
-        if i is not None and _due(watch[i], recent is not None, market, targets, notes):
+        if i is not None and (force or _due(watch[i], recent is not None, market, targets, notes)):
             try:
                 v = value_company(t, market, peers_for(t, market))
                 watch[i] = watch[i].model_copy(update={"fair_value": v.blended, "upside": v.upside,
