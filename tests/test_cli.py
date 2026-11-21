@@ -154,3 +154,11 @@ def test_init_cash_does_not_touch_existing_holdings(data_dir):
     r = runner.invoke(app, ["init", "--data", str(data_dir), "--cash", "9999"])
     assert r.exit_code == 0 and "ignored" in r.stdout
     assert Store(data_dir).load_holdings() == before
+
+
+def test_schema_mismatch_exits_1_with_error_wording(data_dir):
+    (data_dir / "ledger.csv").write_text("date,id\n", encoding="utf-8")
+    result = runner.invoke(app, ["run", "--dry-run", "--today", TODAY, "--data", str(data_dir)])
+    assert result.exit_code == 1
+    assert result.output.startswith("error: schema mismatch in ") and "ledger.csv" in result.output
+    assert "Traceback" not in result.output

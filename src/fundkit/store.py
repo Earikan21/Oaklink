@@ -1,4 +1,6 @@
 import csv
+import os
+import tempfile
 from importlib.resources import files
 from pathlib import Path
 from typing import get_args
@@ -23,20 +25,66 @@ def _allows_none(annotation) -> bool:
     return type(None) in get_args(annotation)
 
 
-def _read_table(path: Path, model):
-    with path.open(newline="", encoding="utf-8") as f:
+def _fields(model) -> list[str]:
+    return list(model.model_fields)
+
+
+def _read_raw(path: Path, model) -> list[dict[str, str]]:
+    """Rows as raw strings, after checking the header against `model`. A missing or empty file has no rows.
+
+    Any header other than exactly the model's fields, in order, and any row with a different number of
+    fields, raises ValueError("schema mismatch in ..."): a Sheet column was added, dropped or moved.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    expected = _fields(model)
+    with path.open(newline="", encoding="utf-8-sig") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
+            return []
+        if header != expected:
+            raise ValueError(f"schema mismatch in {path}: expected {expected}, found {header}")
         rows = []
-        for raw in csv.DictReader(f):
-            row = {
-                key: (None if value == "" and _allows_none(model.model_fields[key].annotation) else value)
-                for key, value in raw.items()
-            }
-            rows.append(model.model_validate(row))
+        for n, rec in enumerate(reader, start=2):
+            if not rec:  # blank line
+                continue
+            if len(rec) != len(expected):
+                raise ValueError(f"schema mismatch in {path}: row {n} has {len(rec)} fields, "
+                                 f"expected {len(expected)}")
+            rows.append(dict(zip(expected, rec)))
+    return rows
+
+
+def _read_table(path: Path, model):
+    rows = []
+    for raw in _read_raw(path, model):
+        row = {
+            key: (None if value == "" and _allows_none(model.model_fields[key].annotation) else value)
+            for key, value in raw.items()
+        }
+        rows.append(model.model_validate(row))
     return rows
 
 
 def _csv_writer(f, model):
-    return csv.DictWriter(f, fieldnames=list(model.model_fields), lineterminator="\n")
+    return csv.DictWriter(f, fieldnames=_fields(model), lineterminator="\n")
+
+
+def _atomic_write_rows(path: Path, model, rows: list[dict]) -> None:
+    """Write header + `rows` (dicts keyed by field) to a temp file beside `path`, then os.replace it in."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+            writer = _csv_writer(f, model)
+            writer.writeheader()
+            writer.writerows(rows)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 class Store:
@@ -65,20 +113,15 @@ class Store:
                 self.save_targets(Targets())
 
     def _write_table(self, path: Path, model, rows) -> None:
-        with path.open("w", newline="", encoding="utf-8") as f:
-            writer = _csv_writer(f, model)
-            writer.writeheader()
-            for row in rows:
-                writer.writerow(row.model_dump(mode="json"))
+        """Full rewrite. An existing file must have the expected header (never silently re-shape a table)."""
+        if path.exists():
+            _read_raw(path, model)  # header / row-shape check only
+        _atomic_write_rows(path, model, [row.model_dump(mode="json") for row in rows])
 
     def _append_table(self, path: Path, model, rows) -> None:
-        write_header = not path.exists() or path.stat().st_size == 0
-        with path.open("a", newline="", encoding="utf-8") as f:
-            writer = _csv_writer(f, model)
-            if write_header:
-                writer.writeheader()
-            for row in rows:
-                writer.writerow(row.model_dump(mode="json"))
+        """Existing rows (kept verbatim, even ones that would not validate) + `rows`, rewritten atomically."""
+        existing = _read_raw(path, model)
+        _atomic_write_rows(path, model, existing + [row.model_dump(mode="json") for row in rows])
 
     def load_holdings(self) -> list[Holding]:
         return _read_table(self.root / HOLDINGS, Holding)
@@ -87,8 +130,12 @@ class Store:
         self._write_table(self.root / HOLDINGS, Holding, holdings)
 
     def load_targets(self) -> Targets:
-        with (self.root / TARGETS).open(newline="", encoding="utf-8") as f:
-            pairs = {row["key"]: row["value"] for row in csv.DictReader(f)}
+        path = self.root / TARGETS
+        with path.open(newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames != ["key", "value"]:
+                raise ValueError(f"schema mismatch in {path}: expected ['key', 'value'], found {reader.fieldnames}")
+            pairs = {row["key"]: row["value"] for row in reader}
         unknown = set(pairs) - set(Targets.model_fields)
         if unknown:
             raise ValueError(f"unknown keys in {TARGETS}: {sorted(unknown)}")

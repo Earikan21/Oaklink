@@ -109,3 +109,88 @@ def test_save_ledger_rewrites_all_rows(tmp_path):
     s.append_ledger([a, b])
     s.save_ledger([a, b.model_copy(update={"response": "skipped"})])
     assert [(r.id, r.response) for r in s.load_ledger()] == [("a", "pending"), ("b", "skipped")]
+
+
+# ---------------------------------------------------------------- C3: schema checks and atomic rewrites
+LEDGER_HEADER = "id,date,action,ticker,amount,rationale,ips_check,response,fill_shares,fill_price,est_tax"
+
+
+def _note(id_: str) -> LedgerRow:
+    return LedgerRow(id=id_, date=date(2026, 11, 22), action="NOTE", ticker="", amount=0, rationale="x",
+                     ips_check="PASS")
+
+
+def test_append_to_header_only_file_without_trailing_newline(tmp_path):
+    s = Store(tmp_path)
+    (tmp_path / "ledger.csv").write_text(LEDGER_HEADER, encoding="utf-8")  # as a Sheet export may leave it
+    s.append_ledger([_note("a")])
+    assert s.load_ledger() == [_note("a")]
+    assert (tmp_path / "ledger.csv").read_text(encoding="utf-8").splitlines()[0] == LEDGER_HEADER
+
+
+def test_append_to_rows_without_trailing_newline_keeps_rows_separate(tmp_path):
+    s = Store(tmp_path)
+    s.append_ledger([_note("a")])
+    p = tmp_path / "ledger.csv"
+    p.write_bytes(p.read_bytes().rstrip(b"\n"))
+    s.append_ledger([_note("b")])
+    assert [r.id for r in s.load_ledger()] == ["a", "b"]
+
+
+@pytest.mark.parametrize("header", [
+    "date,id,action,ticker,amount,rationale,ips_check,response,fill_shares,fill_price,est_tax",  # reordered
+    LEDGER_HEADER + ",extra",                                                                     # extra column
+    "id,date,action,ticker,amount,rationale,ips_check,response,fill_shares,fill_price",           # missing column
+])
+def test_schema_mismatch_raises_value_error_on_read_and_append(tmp_path, header):
+    s = Store(tmp_path)
+    p = tmp_path / "ledger.csv"
+    p.write_text(header + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"^schema mismatch in .*ledger\.csv: expected \['id', 'date'"):
+        s.load_ledger()
+    with pytest.raises(ValueError, match="schema mismatch"):
+        s.append_ledger([_note("a")])
+    assert p.read_text(encoding="utf-8") == header + "\n"  # nothing written
+
+
+def test_row_with_extra_field_is_value_error_not_key_error(tmp_path):
+    s = Store(tmp_path)
+    (tmp_path / "ledger.csv").write_text(
+        LEDGER_HEADER + "\na,2026-11-22,NOTE,,0,x,PASS,pending,,,,surplus\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="schema mismatch"):
+        s.load_ledger()
+
+
+def test_row_with_missing_field_is_value_error(tmp_path):
+    s = Store(tmp_path)
+    (tmp_path / "ledger.csv").write_text(LEDGER_HEADER + "\na,2026-11-22,NOTE\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="schema mismatch"):
+        s.load_ledger()
+
+
+def test_append_preserves_existing_unvalidated_rows_verbatim(tmp_path):
+    s = Store(tmp_path)
+    s.append_ledger([_note("a")])
+    p = tmp_path / "ledger.csv"
+    corrupt = p.read_bytes() + b"bad,notadate,BUY,VTI,1,x,PASS,pending,,,\n"
+    p.write_bytes(corrupt)
+    s.append_ledger([_note("b")])
+    assert p.read_bytes().startswith(corrupt)
+    assert p.read_bytes().splitlines()[-1].split(b",")[0] == b"b"
+
+
+def test_writes_leave_no_temp_files(tmp_path):
+    s = Store(tmp_path)
+    s.init()
+    s.append_ledger([_note("a")])
+    s.save_holdings([])
+    assert sorted(x.name for x in tmp_path.iterdir()) == [
+        "holdings.csv", "ledger.csv", "performance.csv", "targets.csv", "watchlist.csv"]
+
+
+def test_load_targets_wrong_header_is_value_error(tmp_path):
+    s = Store(tmp_path)
+    s.init()
+    (tmp_path / "targets.csv").write_text("name,val\nstocks,0.5\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="schema mismatch"):
+        s.load_targets()
