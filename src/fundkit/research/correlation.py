@@ -8,7 +8,7 @@ MIN_OVERLAP = 60
 
 
 def pairwise(tickers: list[str], market: MarketData, period: str = "1y") -> pd.DataFrame:
-    closes = pd.concat({t: market.history(t, period)["Close"] for t in tickers}, axis=1).dropna()
+    closes = pd.concat({t: market.history(t, period)["Close"] for t in tickers}, axis=1, join="inner").dropna()
     returns = np.log(closes / closes.shift(1)).dropna()
     if len(returns) < MIN_OVERLAP:
         raise ValueError("insufficient overlap")

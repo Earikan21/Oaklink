@@ -77,3 +77,12 @@ def test_max_corr_with_ignores_self_in_held(fake_market_two_series):
     m, a, b, _ = fake_market_two_series
     assert max_corr_with("A", ["A", "B"], m) == pytest.approx(np.corrcoef(_logret(a), _logret(b))[0, 1])
     assert max_corr_with("A", ["A"], m) == 0.0
+
+
+def test_pairwise_differing_lengths_and_start_dates_no_warning():
+    # shorter series first: the union index then differs from the first series' index (the warning trigger)
+    m = FakeMarket({"A": {"history": _series(250, 2, end="2026-11-24")},
+                    "B": {"history": _series(300, 1)}})
+    out = pairwise(["A", "B"], m)
+    assert out.shape == (2, 2)
+    assert out.loc["A", "A"] == pytest.approx(1.0)

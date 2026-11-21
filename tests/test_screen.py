@@ -197,8 +197,7 @@ def test_gate_valuation_impossible():
 
 def test_gate_insufficient_history_for_stage():
     env = gate_env()
-    for t in ("ACME", "HELD"):  # same short index on both: keeps the correlation overlap aligned
-        env["market"].data[t]["history"] = env["market"].data[t]["history"].iloc[-100:]
+    env["market"].data["ACME"]["history"] = env["market"].data["ACME"]["history"].iloc[-100:]
     g = gate(**env)
     assert "insufficient history for stage" in g.reasons and g.stage is None
 
