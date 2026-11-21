@@ -20,11 +20,14 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest"]
 
+[project.scripts]
+fundkit = "fundkit.cli:app"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-fundkit = ["examples/*.csv", "templates/*.j2"]
+fundkit = ["examples/*.csv", "examples/*.json", "templates/*.j2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
