@@ -141,3 +141,22 @@ def test_todays_own_pending_rows_are_not_carried(store_with_cash_3000):
     r = reconcile(s, today=d(0))
     assert r.carried == ["old"] and r.dropped == []
     assert [x.response for x in s.load_ledger()] == ["pending", "pending"]
+
+
+def test_modified_with_fills_is_applied_like_done(store_with_cash_3000):
+    s = store_with_cash_3000
+    s.append_ledger([row("m1", -3, "BUY", "VTI", amount=1500, response="modified", fill_shares=4.0,
+                         fill_price=300.0)])
+    r = reconcile(s, today=d(0))
+    assert r.applied == ["m1"] and r.incomplete == []
+    h = holdings(s)
+    assert h["VTI"].shares == 4.0 and h["CASH"].shares == 1800.0
+    assert s.load_ledger()[0].response == "applied"
+
+
+def test_modified_without_fills_is_incomplete(store_with_cash_3000):
+    s = store_with_cash_3000
+    s.append_ledger([row("m2", -3, "SELL", "VTI", response="modified", fill_shares=1.0)])
+    r = reconcile(s, today=d(0))
+    assert r.incomplete == ["m2"] and r.applied == []
+    assert s.load_ledger()[0].response == "modified"

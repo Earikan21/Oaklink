@@ -40,7 +40,7 @@ CSV files in the data dir; each maps to a tab of the "Oaklink Fund Ledger" Sheet
 - `holdings.csv`: `ticker`, `sleeve` (indexed_equity / active / bonds / cash), `shares`, `cost_basis` (per share), `lot_date`. Source of truth.
 - `targets.csv`: `key,value` IPS parameters (below).
 - `watchlist.csv`: `ticker`, `thesis`, `last_valued`, `fair_value`, `upside`, `status` (candidate / passed / rejected / held).
-- `ledger.csv` (Decision Ledger): `id`, `date`, `action` (BUY / SELL / REBALANCE / NOTE), `ticker`, `amount`, `rationale`, `ips_check`, `response` (pending / done / applied / skipped / modified), `fill_shares`, `fill_price`, `est_tax`. Emmet sets `done` plus fill data, or `skipped`.
+- `ledger.csv` (Decision Ledger): `id`, `date`, `action` (BUY / SELL / REBALANCE / NOTE), `ticker`, `amount`, `rationale`, `ips_check`, `response` (pending / done / applied / skipped / modified), `fill_shares`, `fill_price`, `est_tax`. Emmet sets `done` (or `modified`, when he traded a different amount) plus fill data, or `skipped`; `modified` is reconciled exactly like `done`.
 - `performance.csv`: `date,total,indexed_equity,active,bonds,cash,bench_total,active_vs_index,turnover_qtd,unpriced`. Appended by the package only.
 
 ## IPS rules encoded (`targets.csv` defaults)

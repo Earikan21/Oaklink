@@ -43,7 +43,7 @@ def reconcile(store: Store, today: date) -> ReconcileResult:
                 result.dropped.append(row.id)
             elif row.date < today:  # today's own proposals (a same-day re-run) are not "carried"
                 result.carried.append(row.id)
-        elif row.response == "done" and row.action in ("BUY", "SELL"):
+        elif row.response in ("done", "modified") and row.action in ("BUY", "SELL"):  # modified = done at other fills
             if row.fill_shares is None or row.fill_price is None:
                 result.incomplete.append(row.id)
                 continue
