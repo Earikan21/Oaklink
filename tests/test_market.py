@@ -16,7 +16,7 @@ class _StubTicker:
         self._hist = hist
         self.income_stmt = pd.DataFrame({"a": [1]})
 
-    def history(self, period="1y"):
+    def history(self, period="1y", auto_adjust=True):
         return self._hist if self._hist is not None else pd.DataFrame()
 
 
@@ -174,3 +174,16 @@ def test_invalid_price_raises_market_unavailable(tmp_path, monkeypatch, bad):
 def test_invalid_fast_price_falls_back_to_valid_info_price(tmp_path, monkeypatch):
     _patch(monkeypatch, price=float("nan"), info={"regularMarketPrice": 42.0})
     assert YFMarket(tmp_path).quote("X").price == 42.0
+
+
+def test_history_is_unadjusted_like_quotes(tmp_path, monkeypatch):
+    seen = {}
+
+    class Rec(_StubTicker):
+        def history(self, period="1y", **kw):
+            seen.update(kw, period=period)
+            return make_history(100, 5)
+
+    monkeypatch.setattr("fundkit.market.yf.Ticker", lambda t: Rec())
+    YFMarket(tmp_path).history("VTI", "2y")
+    assert seen == {"period": "2y", "auto_adjust": False}

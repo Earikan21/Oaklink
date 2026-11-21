@@ -133,8 +133,10 @@ class YFMarket:
         )
 
     def history(self, ticker: str, period: str = "1y") -> pd.DataFrame:
+        """Daily OHLCV, tz-naive. Unadjusted (`auto_adjust=False`): Close is the traded price, consistent
+        with `quote()` prices and the cost basis of lots; dividends are not folded into past closes."""
         def fetch() -> pd.DataFrame:
-            h = yf.Ticker(ticker).history(period=period)
+            h = yf.Ticker(ticker).history(period=period, auto_adjust=False)
             if h is None or h.empty:
                 raise MarketUnavailable(ticker)
             h = h.copy()
