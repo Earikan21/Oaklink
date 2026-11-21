@@ -12,7 +12,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from fundkit.actions import ActionSet
 from fundkit.ips import ComplianceReport
-from fundkit.models import Snapshot, WatchItem
+from fundkit.models import Snapshot, Targets, WatchItem
 from fundkit.portfolio import Proposal
 from fundkit.reconcile import ReconcileResult
 from fundkit.research.earnings import EarningsResult
@@ -55,6 +55,7 @@ class MemoContext:
     unpriced: list[str]
     ai_notes: dict[str, str] = field(default_factory=dict)  # keys "3".."7"
     etf_notes: list[str] = field(default_factory=list)      # ETFs that could not be checked
+    targets: Targets = field(default_factory=Targets)        # the run's targets; non-defaults are listed in §2
 
 
 def _money(x: float) -> str:
@@ -121,8 +122,12 @@ def _flag_lines(c: ComplianceReport) -> list[str]:
     return lines
 
 
-def _compliance_lines(c: ComplianceReport) -> list[str]:
-    return _flag_lines(c) or ["All green."]
+def _compliance_lines(c: ComplianceReport, targets: Targets) -> list[str]:
+    lines = _flag_lines(c) or ["All green."]
+    diff = targets.differences()
+    if diff:  # informational, not a flag
+        lines.append(f"Targets differ from IPS defaults: {', '.join(diff)}")
+    return lines
 
 
 def _action_lines(a: ActionSet, c: ComplianceReport) -> list[str]:
@@ -142,7 +147,7 @@ def _build(ctx: MemoContext, n_watch: int, n_active: int, n_earn: int,
         title=f"# Oaklink weekly memo — {ctx.date:%Y-%m-%d}" + (" · REVIEW RUN" if ctx.review else ""), attention=_attention(ctx),
         last_week=[" · ".join([_ids("Applied", r.applied), _ids("Carried", r.carried),
                                _ids("Dropped", r.dropped), _ids("Incomplete", r.incomplete)])],
-        warnings=r.warnings, compliance=_compliance_lines(ctx.compliance),
+        warnings=r.warnings, compliance=_compliance_lines(ctx.compliance, ctx.targets),
         etf_lines=etf_lines or ["Nothing to do."],
         active_rows=[_active_line(x) for x in shown_active], active_more=len(ctx.active_rows) - len(shown_active),
         earnings_lines=earn[:n_earn], earnings_more=len(earn) - len(earn[:n_earn]),

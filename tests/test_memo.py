@@ -189,6 +189,16 @@ def test_fund_flags_listed_in_compliance_section():
     assert "All green." not in sec
 
 
+def test_targets_differing_from_defaults_are_listed_in_section_2():
+    from fundkit.models import Targets
+    sec = "\n".join(_section(render(_ctx(targets=Targets(name_cap=0.04, index_etf="ITOT"))), 2))
+    assert "Targets differ from IPS defaults: name_cap=0.04, index_etf=ITOT" in sec
+    assert "All green." in sec  # not a flag
+    assert "Targets differ" not in render(_ctx())
+    out = render(_ctx(targets=Targets(name_cap=0.04)))
+    assert "No action — portfolio within IPS bands" in out
+
+
 def test_reconcile_section():
     r = ReconcileResult(applied=["a1", "a2"], carried=["c1"], warnings=["thesis stale"])
     sec = "\n".join(_section(render(_ctx(reconcile=r)), 1))

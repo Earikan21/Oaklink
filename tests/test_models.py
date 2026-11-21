@@ -76,3 +76,44 @@ def test_quote_round_trips_price():
     )
     assert q.price == 250.0
     assert q.quote_type == "ETF"
+
+
+# ---------------------------------------------------------------- I9: Targets validators
+FRACTIONS = ["band", "active_ceiling", "name_cap", "trim_threshold", "review_trim", "fee_cap", "min_upside",
+             "max_corr", "max_spread", "reval_move"]
+
+
+def test_name_cap_given_as_percent_is_rejected():
+    with pytest.raises(ValidationError):
+        Targets(name_cap=5)
+
+
+@pytest.mark.parametrize("field", FRACTIONS)
+@pytest.mark.parametrize("bad", [0.0, -0.1, 1.5])
+def test_fraction_fields_must_be_in_0_1(field, bad):
+    with pytest.raises(ValidationError, match="must be in \\(0, 1\\]"):
+        Targets(**{field: bad})
+
+
+def test_allocation_fractions_must_be_positive():
+    with pytest.raises(ValidationError):
+        Targets(stocks=0.7, bonds=0.3, cash=0.0)
+
+
+@pytest.mark.parametrize("kw", [
+    dict(name_cap=0.06, active_ceiling=0.05),           # name_cap > active_ceiling
+    dict(active_ceiling=0.55),                           # active_ceiling > stocks
+    dict(review_trim=0.08),                              # review_trim > trim_threshold
+    dict(name_cap=0.065),                                # name_cap > review_trim
+    dict(fee_cap=0.01),                                  # above the IPS 0.9% cap
+    dict(review_every=0),
+])
+def test_targets_ordering_and_caps_rejected(kw):
+    with pytest.raises(ValidationError):
+        Targets(**kw)
+
+
+def test_boundary_targets_accepted():
+    t = Targets(name_cap=0.06, review_trim=0.06, trim_threshold=0.06, active_ceiling=0.06, fee_cap=0.009,
+                review_every=1, stocks=0.5, max_corr=1.0)
+    assert t.name_cap == t.review_trim == t.trim_threshold == 0.06

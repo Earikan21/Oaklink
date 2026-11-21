@@ -102,7 +102,7 @@ def test_buy_refused_above_active_ceiling():
     holdings = [make_holding("VTI", "indexed_equity", 1), make_holding("A", "active", 1),
                 make_holding("BND", "bonds", 1), make_holding("CASH", "cash", 1)]
     values = {"VTI": 1200.0, "A": 50.0, "BND": 900.0, "CASH": 850.0}  # total 3000
-    t = Targets(name_cap=1.0, active_ceiling=0.05)  # isolate the ceiling rule
+    t = Targets(active_ceiling=0.05)  # isolate the ceiling rule (the 150 buy is exactly the 5% name cap)
     ok, why = buy_allowed("B", 150.0, holdings, values, t)  # active 200/3000 = 6.7% > 5%
     assert not ok and why == "active sleeve would be 6.7% > 5% ceiling"
 
@@ -111,7 +111,7 @@ def test_buy_refused_when_indexed_would_trail_active():
     holdings = [make_holding("VTI", "indexed_equity", 1), make_holding("A", "active", 1),
                 make_holding("BND", "bonds", 1), make_holding("CASH", "cash", 1)]
     values = {"VTI": 100.0, "A": 90.0, "BND": 900.0, "CASH": 1910.0}  # total 3000
-    t = Targets(name_cap=1.0)
+    t = Targets()
     ok, why = buy_allowed("B", 50.0, holdings, values, t)  # active 140 > indexed 100
     assert not ok and why == "indexed equity would trail active sleeve"
 

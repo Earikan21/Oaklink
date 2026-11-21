@@ -625,3 +625,10 @@ def test_no_seeding_over_unreadable_watchlist(store_corrupt_watchlist, fake_mark
     monkeypatch.setattr(run_mod, "seed_candidates", lambda *a, **k: called.append(1) or [])
     weekly_run(store_corrupt_watchlist, fake_market_basic, TODAY, dry_run=True, force_review=True)
     assert called == []
+
+
+def test_non_default_targets_noted_in_memo(store_with_cash_3000, fake_market_basic):
+    from fundkit.models import Targets
+    store_with_cash_3000.save_targets(Targets(review_every=4))
+    r = weekly_run(store_with_cash_3000, fake_market_basic, TODAY, dry_run=True)
+    assert "Targets differ from IPS defaults: review_every=4" in r.memo_md.split("## 3.")[0]

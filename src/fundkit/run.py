@@ -115,7 +115,7 @@ def weekly_run(store: Store, market: MarketData, today: date, dry_run: bool = Fa
     ctx = MemoContext(date=today, review=review, reconcile=rec, compliance=actions.compliance, etf_rows=etf_rows,
                       active_rows=active_rows, earnings_previews=previews, earnings_recaps=recaps,
                       watch_summary=watch, actions=actions, snapshot=snap, unpriced=unpriced,
-                      ai_notes=dict(ai_notes or {}), etf_notes=etf_notes)
+                      ai_notes=dict(ai_notes or {}), etf_notes=etf_notes, targets=targets)
     memo_md = render(ctx)
 
     written = False
