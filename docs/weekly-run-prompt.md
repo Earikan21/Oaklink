@@ -85,8 +85,10 @@ Toolkit: the wheel `fundkit-0.1.0-py3-none-any.whl` in the same Drive folder, fi
    is the memo that is published. Same date as step 3, so it computes the same actions; a live run is
    idempotent per day (re-running it adds no duplicate rows). Never pass a different date here.
 
-6. **Save the memo.** Save `memo.md` to the AI Fund project as `memos/<today>.md` (YYYY-MM-DD). In
-   preview mode (step 0) or web-quoted mode, put that fact in the memo's first line.
+6. **Save the memo.** Save `memo.md` to the AI Fund project as `memos/<today>.md` (YYYY-MM-DD) with
+   the project tool; if this session has no project tool, upload it instead to the Drive folder "Oaklink
+   Fund" as `memo-<today>.md` (text/markdown, no conversion). In preview mode (step 0) or web-quoted
+   mode, put that fact in the memo's first line.
 
 7. **Push the data back.** With the Google Sheets connector, replace the contents of the tabs
    Decision Ledger, Watchlist, Holdings and Performance with the current local CSVs
@@ -97,8 +99,9 @@ Toolkit: the wheel `fundkit-0.1.0-py3-none-any.whl` in the same Drive folder, fi
    Before replacing each tab, re-read it and compare its row count with what you pulled in step 1. If the
    Sheet was edited since step 1 (counts differ), do not overwrite it: report the difference instead.
 
-8. **Summarize in chat.** If `memo.md` contains an `**Attention:**` line, repeat it as the first line of
-   your chat summary, then give a short summary of the Actions section.
+8. **Summarize for Emmet.** Send one message (SendUserMessage, and a PushNotification if that tool
+   exists): if `memo.md` contains an `**Attention:**` line, repeat it as the first line, then the Actions
+   section's lines verbatim, then where the memo was saved. Nothing else.
 
 ## Never
 
