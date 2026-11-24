@@ -4,12 +4,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PROMPT = (ROOT / "docs" / "weekly-run-prompt.md").read_text(encoding="utf-8")
 README = (ROOT / "README.md").read_text(encoding="utf-8")
-INSTALL = ("base64 -d <that file> > fundkit-0.1.0-py3-none-any.whl && "
+INSTALL = ("cp <that path> fundkit-0.1.0-py3-none-any.whl && "
            "pip install fundkit-0.1.0-py3-none-any.whl --break-system-packages")
 
 
-def test_prompt_installs_the_wheel_decoded_from_the_project_doc():
-    assert INSTALL in PROMPT and "claude/fundkit-wheel-b64.txt" in PROMPT
+def test_prompt_installs_the_wheel_downloaded_from_drive():
+    assert INSTALL in PROMPT and "14e2Hn6ydcUPaj9Zyo94px6E-8yxY8JFt" in PROMPT
     assert "pip install <TOOLKIT_ZIP_PATH>" not in PROMPT and "<SHEET_FILE_ID>" not in PROMPT
 
 
