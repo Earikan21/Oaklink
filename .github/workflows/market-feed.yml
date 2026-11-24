@@ -1,0 +1,44 @@
+name: market-feed
+
+# Fetches the market data the weekly Oaklink run needs (Yahoo Finance is reachable from GitHub's runners
+# but not from Claude's workspace) and commits it to feed/market.json.
+# Runs Saturday 05:40 UTC (Friday 9:40 PM Pacific, after the close) and on demand.
+
+on:
+  schedule:
+    - cron: "40 5 * * 6"
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Extra tickers, comma-separated (held + watchlist names are read from feed/tickers.txt)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-feed
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install .
+      - name: Dump the feed
+        run: |
+          fundkit feed-dump --out feed/market.json --tickers-file feed/tickers.txt \
+            --tickers "${{ github.event.inputs.tickers }}" --universe-limit 30
+      - name: Commit
+        run: |
+          git config user.name "market-feed bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add feed/market.json
+          git diff --cached --quiet && echo "no change" || git commit -m "feed: $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push

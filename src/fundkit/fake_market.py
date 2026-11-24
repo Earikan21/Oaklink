@@ -36,19 +36,9 @@ class FakeMarket:
 
     @classmethod
     def from_json(cls, path) -> "FakeMarket":
-        raw = json.loads(Path(path).read_text())
-        data: dict = {}
-        for ticker, entry in raw.items():
-            if ticker == "__screen__":
-                data[ticker] = list(entry)
-                continue
-            entry = dict(entry)
-            if "quote" in entry:
-                entry["quote"] = Quote(**entry["quote"])
-            if "history" in entry:
-                entry["history"] = _history_frame(entry["history"])
-            data[ticker] = entry
-        return cls(data)
+        """Load the packaged example format or a `fundkit feed-dump` file (see fundkit.feed)."""
+        from fundkit.feed import load
+        return cls(load(path))
 
     def _get(self, ticker: str, key: str):
         entry = self.data.get(ticker)
@@ -87,4 +77,9 @@ class FakeMarket:
         return self._get(ticker, "earnings_dates")
 
     def screen(self, query: dict) -> list[str]:
+        """An exact query recorded by the feed (peer lookups) wins; anything else gets `__screen__`."""
+        from fundkit.feed import screen_key
+        exact = self.data.get("__screens__", {})
+        if isinstance(exact, dict) and screen_key(query) in exact:
+            return list(exact[screen_key(query)])
         return list(self.data.get("__screen__", []))

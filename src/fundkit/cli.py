@@ -101,6 +101,45 @@ def sheet_export(
     typer.echo(str(xlsx))
 
 
+@app.command("feed-dump")
+def feed_dump(
+    out: Annotated[Path, typer.Option("--out", help="Feed file to write (JSON).")] = Path("feed/market.json"),
+    data: DataOpt = None,
+    tickers: Annotated[str, typer.Option("--tickers", help="Extra tickers, comma-separated.")] = "",
+    tickers_file: Annotated[Optional[Path], typer.Option("--tickers-file", help="File with one ticker per line (# comments ok).")] = None,
+    universe_limit: Annotated[int, typer.Option("--universe-limit")] = 30,
+) -> None:
+    """Fetch market data for the index/bond ETFs, held and watchlist names, extra tickers and the Graham
+    universe into one JSON file that `FUNDKIT_MARKET=fake FUNDKIT_FAKE_MARKET_JSON=<file>` can run from.
+    Needs network (run it where Yahoo Finance is reachable). Uses the live market even if FUNDKIT_MARKET=fake."""
+    from fundkit.feed import dump
+    d = _data_dir(data)
+    core: list[str] = []
+    extra: list[str] = []
+    if d.is_dir():
+        store = Store(d)
+        t = store.load_targets()
+        core += [t.index_etf, t.bond_etf]
+        core += [h.ticker for h in store.load_holdings() if h.ticker != "CASH"]
+        try:
+            extra += [w.ticker for w in store.load_watchlist()]
+        except ValueError:
+            pass
+    extra += [x.strip().upper() for x in tickers.split(",") if x.strip()]
+    if tickers_file and tickers_file.exists():
+        for line in tickers_file.read_text().splitlines():
+            line = line.split("#", 1)[0].strip().upper()
+            if line:
+                extra.append(line)
+    market = YFMarket(cache_dir=(d if d.is_dir() else out.parent) / "cache", ttl_hours=0)
+    with _errors():
+        meta = dump(market, core, extra, out, universe_limit=universe_limit, log=lambda m: typer.echo(m, err=True))
+    typer.echo(f"wrote {out}: {len(meta['core'])} core, {len(meta['extra'])} extra, "
+               f"{len(meta['universe'])} universe, {len(meta['errors'])} errors")
+    for e in meta["errors"][:20]:
+        typer.echo(f"  {e}", err=True)
+
+
 @app.command("reconcile")
 def reconcile_cmd(today: TodayOpt = None, data: DataOpt = None) -> None:
     """Apply filled ledger rows to holdings and expire stale pending rows."""

@@ -1,0 +1,2 @@
+# One ticker per line. The weekly run keeps this in sync with the Sheet (held + watchlist names);
+# add a line to have next Saturday's feed include a name you want valued. VTI and BND are always included.
