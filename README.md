@@ -29,7 +29,9 @@ fundkit run --data ./data --dry-run --review   # first run: writes nothing, prin
 
 Read the memo: 1 Last week, 2 IPS compliance, 3 Index & bond sleeve, 4 Active sleeve, 5 Watchlist,
 6 Actions, 7 Scorecard. Drop `--dry-run` to record the run. Other commands: `fundkit reconcile [--today]`,
-`fundkit screen [--limit N]`, `fundkit value TICKER [--peers A,B,C]`. `--data` defaults to `$FUNDKIT_DATA`,
+`fundkit screen [--limit N]`, `fundkit value TICKER [--peers A,B,C]`, `fundkit sheet-import BOOK.xlsx` (the
+"Oaklink Fund Ledger" workbook exported from Google Sheets → `data/*.csv`, headers validated) and
+`fundkit sheet-export OUT.xlsx` (ledger, watchlist, holdings, performance → workbook for upload). `--data` defaults to `$FUNDKIT_DATA`,
 then `./data`. Exit codes: 0 ok; 1 `error: ...` on stderr (market or value error); 2 data dir missing
 (run `fundkit init`).
 

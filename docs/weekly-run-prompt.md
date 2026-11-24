@@ -1,7 +1,7 @@
 # Weekly run prompt (the scheduled task, verbatim)
 
 > This file is the literal text of the Saturday scheduled task. Placeholders in angle brackets
-> (`<SHEET_FILE_ID>`, `<TOOLKIT_ZIP_PATH>`) are filled in by Task 16 when the task is created.
+> were filled in on 2026-11-24 when the Sheet and the scheduled task were created.
 
 ---
 
@@ -11,11 +11,23 @@ read its output and add judgment. Follow these steps in order.
 Date: substitute the current date in America/Los_Angeles as YYYY-MM-DD everywhere `<today>` appears, and use
 the identical date in steps 3, 5 and 6.
 
-Sheet: Google Sheet "Oaklink Fund Ledger", file id `<SHEET_FILE_ID>`.
-Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
+Sheet: Google Sheet "Oaklink Fund Ledger", file id `16Twd-A7b9ELl1I-uMDoykIqOri95jafQb0jpLdVI9z8`
+(Drive folder "Oaklink Fund", id `1ehq1sI-KGKZAbziuYIPCfZkcKCqifVDT`).
+Toolkit: the AI Fund project doc `claude/fundkit-wheel-b64.txt` holds the release wheel, base64-encoded
+(a copy of the release zip also sits in the Drive folder for humans).
 
-1. **Pull the data.** Using the Drive connector, read these tabs of the Sheet and write each to a CSV in
-   `data/` (create the directory). The header row must match the package's `examples/*.csv` exactly:
+0. **Check what you have.** You need (a) the Google Drive connector, (b) the Google Sheets connector
+   (tools that read and write cell values, e.g. `get_values` / `update_values`), and (c) `pip` access.
+   If (b) is missing, you may still do steps 1 to 4 and 6 to 8 in *preview mode*: skip step 5 (live
+   run) and step 7, and say in the chat summary that the Google Sheets connector must be turned on for
+   the run to record anything. Nothing is lost: a preview run writes nothing durable.
+
+1. **Pull the data.** Export the Sheet as a workbook with the Drive connector
+   (`download_file_content`, `exportMimeType` =
+   `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`; the tool saves the bytes to a
+   local path), then convert it: `fundkit sheet-import <that path> --data ./data`. This writes the five
+   CSVs below with normalised values and fails with `error: schema mismatch …` if a tab or header column
+   moved. Do not hand-write the CSVs. The tabs and headers, for reference:
 
    | Tab | File | Header |
    |---|---|---|
@@ -27,17 +39,32 @@ Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
 
    Performance is pulled too, but only the package ever appends to it. Do not edit any CSV by hand.
 
-   Write values exactly as the package expects: dates as ISO `YYYY-MM-DD` (not `11/22/2026`), numbers as
-   plain unformatted numbers (`1500.5`, not `$1,500.50`; `0.05`, not `5%`; no thousands separators), and
-   empty cells as empty. Read the Sheet's unformatted values; if the connector only gives formatted text,
-   strip the formatting before writing the CSV.
+   Emmet types values into the Sheet as ISO dates (`YYYY-MM-DD`) and plain numbers (`1500.5`, `0.05`);
+   the import converts real date/number cells, but text like `$1,500.50` or `5%` will fail validation.
 
-2. **Install the toolkit.** The release zip holds a wheel (see its `INSTALL.txt`); pip cannot install the zip
-   itself:
-   `unzip -o <TOOLKIT_ZIP_PATH> -d toolkit && pip install toolkit/fundkit-*.whl --break-system-packages`
+2. **Install the toolkit.** Read the project doc `claude/fundkit-wheel-b64.txt` (the tool saves large
+   docs to a local file), then:
+   `base64 -d <that file> > fundkit-0.1.0-py3-none-any.whl && pip install fundkit-0.1.0-py3-none-any.whl --break-system-packages`
+   Check: `fundkit --help` lists `run`, `sheet-import`, `sheet-export`.
 
 3. **Preview the cycle (dry run).**
    `fundkit run --data ./data --today <today> --dry-run --json run.json --out memo.md`
+
+   **If this fails with `error: cannot price …` or a market-data error**, Yahoo Finance is not reachable
+   from this environment (its network allowlist). Then, and only then, use *web-quoted mode*:
+   - It is allowed only while Holdings contain nothing but CASH, `index_etf` and `bond_etf` (check
+     `data/holdings.csv`). If any other ticker is held or the Watchlist is non-empty, stop and report
+     "market data unavailable; active names cannot be valued" — do not guess.
+   - Web-search the current price, bid, ask, NAV, expense ratio and average volume for the index and bond
+     ETFs (prefer the issuer's page or Yahoo Finance; note the quote time). Write `market.json` in the
+     package's offline format (one object per ticker with `quote` {ticker, price, bid, ask,
+     expense_ratio as a fraction e.g. 0.0003, nav, quote_type "ETF", avg_volume}, `info` {longName,
+     quoteType, netExpenseRatio as percent e.g. 0.03}, `history` {start: <yesterday>, closes: [price, price]},
+     plus `"__screen__": []`).
+   - Run every `fundkit run` in this cycle with `FUNDKIT_MARKET=fake FUNDKIT_FAKE_MARKET_JSON=market.json`
+     in the environment, pass `--no-review` (screening is impossible without data), and start your notes
+     for section 3 with "Prices web-quoted at <time> from <source>; Yahoo Finance unreachable."
+   - The scorecard's benchmark is then flat for the week; say so in section 7's note.
    The run first reconciles the Decision Ledger: rows Emmet marked `done` (with `fill_shares` and
    `fill_price`) become `applied` and update Holdings; `skipped` rows are closed. Chat replies never reach
    a scheduled run, so the Sheet is the only channel. Reconcile is the only thing a dry run writes, and it
@@ -58,11 +85,15 @@ Toolkit: release zip `<TOOLKIT_ZIP_PATH>` in the AI Fund project.
    is the memo that is published. Same date as step 3, so it computes the same actions; a live run is
    idempotent per day (re-running it adds no duplicate rows). Never pass a different date here.
 
-6. **Save the memo.** Save `memo.md` to the AI Fund project as `memos/<today>.md` (YYYY-MM-DD).
+6. **Save the memo.** Save `memo.md` to the AI Fund project as `memos/<today>.md` (YYYY-MM-DD). In
+   preview mode (step 0) or web-quoted mode, put that fact in the memo's first line.
 
-7. **Push the data back.** Replace the contents of these Sheet tabs with the current local CSVs:
-   `data/ledger.csv`, `data/watchlist.csv`, `data/holdings.csv`, `data/performance.csv`.
-   Do not push `targets.csv` (the Sheet is its source).
+7. **Push the data back.** With the Google Sheets connector, replace the contents of the tabs
+   Decision Ledger, Watchlist, Holdings and Performance with the current local CSVs
+   (`data/ledger.csv`, `data/watchlist.csv`, `data/holdings.csv`, `data/performance.csv`): clear each
+   tab's old rows, write the header plus rows from the CSV as plain values (dates as text `YYYY-MM-DD`).
+   `fundkit sheet-export out.xlsx --data ./data` gives the same four tabs as a workbook if a bulk
+   route is easier. Never push `targets.csv` (the Sheet is its source).
    Before replacing each tab, re-read it and compare its row count with what you pulled in step 1. If the
    Sheet was edited since step 1 (counts differ), do not overwrite it: report the difference instead.
 

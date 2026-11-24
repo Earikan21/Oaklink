@@ -75,6 +75,32 @@ def init(
             typer.echo(f"seeded ${cash:,.0f} cash")
 
 
+@app.command("sheet-import")
+def sheet_import(
+    xlsx: Annotated[Path, typer.Argument(help="Workbook exported from the Google Sheet (.xlsx).")],
+    data: DataOpt = None,
+) -> None:
+    """Write the workbook's five tabs to data/*.csv (replaces the CSVs; validates headers)."""
+    from fundkit.sheet import import_workbook
+    with _errors():
+        counts = import_workbook(Path(xlsx), _data_dir(data))
+    for name, n in counts.items():
+        typer.echo(f"{name}.csv: {n} rows")
+
+
+@app.command("sheet-export")
+def sheet_export(
+    xlsx: Annotated[Path, typer.Argument(help="Workbook to write (.xlsx) for upload to the Sheet.")],
+    data: DataOpt = None,
+) -> None:
+    """Write ledger, watchlist, holdings and performance CSVs into a workbook (never targets)."""
+    from fundkit.sheet import export_workbook
+    d = _existing_store(_data_dir(data)).root
+    with _errors():
+        export_workbook(d, Path(xlsx))
+    typer.echo(str(xlsx))
+
+
 @app.command("reconcile")
 def reconcile_cmd(today: TodayOpt = None, data: DataOpt = None) -> None:
     """Apply filled ledger rows to holdings and expire stale pending rows."""

@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2",
     "typer",
     "jinja2",
+    "openpyxl",
 ]
 
 [project.optional-dependencies]
