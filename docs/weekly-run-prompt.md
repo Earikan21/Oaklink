@@ -47,24 +47,24 @@ Toolkit: the wheel `fundkit-0.1.0-py3-none-any.whl` in the same Drive folder, fi
    `cp <that path> fundkit-0.1.0-py3-none-any.whl && pip install fundkit-0.1.0-py3-none-any.whl --break-system-packages`
    Check: `fundkit --help` lists `run`, `sheet-import`, `sheet-export`.
 
-3. **Preview the cycle (dry run).**
-   `fundkit run --data ./data --today <today> --dry-run --json run.json --out memo.md`
-
-   **If this fails with `error: cannot price …` or a market-data error**, Yahoo Finance is not reachable
-   from this environment (its network allowlist). Then, and only then, use *web-quoted mode*:
-   - It is allowed only while Holdings contain nothing but CASH, `index_etf` and `bond_etf` (check
-     `data/holdings.csv`). If any other ticker is held or the Watchlist is non-empty, stop and report
-     "market data unavailable; active names cannot be valued" — do not guess.
-   - Web-search the current price, bid, ask, NAV, expense ratio and average volume for the index and bond
-     ETFs (prefer the issuer's page or Yahoo Finance; note the quote time). Write `market.json` in the
-     package's offline format (one object per ticker with `quote` {ticker, price, bid, ask,
-     expense_ratio as a fraction e.g. 0.0003, nav, quote_type "ETF", avg_volume}, `info` {longName,
-     quoteType, netExpenseRatio as percent e.g. 0.03}, `history` {start: <yesterday>, closes: [price, price]},
-     plus `"__screen__": []`).
-   - Run every `fundkit run` in this cycle with `FUNDKIT_MARKET=fake FUNDKIT_FAKE_MARKET_JSON=market.json`
-     in the environment, pass `--no-review` (screening is impossible without data), and start your notes
-     for section 3 with "Prices web-quoted at <time> from <source>; Yahoo Finance unreachable."
-   - The scorecard's benchmark is then flat for the week; say so in section 7's note.
+3. **Get market data, then preview the cycle (dry run).** Yahoo Finance is NOT reachable from this
+   environment, so the package runs from the feed file that the `market-feed` GitHub Action writes to
+   the repo `Earikan21/oaklink-fund-toolkit` (Saturday 05:40 UTC; see `feed/README.md` there).
+   - Attach the repo (add_repo, push access) and clone it; read `feed/market.json`'s `__meta__.generated`.
+     If it is older than 3 days, or any held/watchlist ticker is missing from the file, append the missing
+     tickers to `feed/tickers.txt`, commit and push, run `gh workflow run market-feed.yml` in the clone,
+     wait for the run to finish (`gh run watch`, up to 20 minutes), and `git pull`.
+   - Export `FUNDKIT_MARKET=fake FUNDKIT_FAKE_MARKET_JSON=<clone>/feed/market.json` for every `fundkit run`
+     in this cycle, and start your section 3 note with "Market data: feed generated <generated>".
+   - Then: `fundkit run --data ./data --today <today> --dry-run --json run.json --out memo.md`
+   - If the feed cannot be obtained at all (no repo access, Action failing), use *web-quoted mode* as a last
+     resort: allowed only while Holdings contain nothing but CASH, `index_etf` and `bond_etf`; otherwise
+     stop and report "market data unavailable; active names cannot be valued". Web-search price, bid, ask,
+     NAV, expense ratio and average volume for the two ETFs, write `market.json` in the packaged example
+     format (per ticker: `quote` {ticker, price, bid, ask, expense_ratio as fraction, nav, quote_type "ETF",
+     avg_volume}, `info` {longName, quoteType, netExpenseRatio as percent}, `history` {start: <yesterday>,
+     closes: [price, price]}; plus `"__screen__": []`), point `FUNDKIT_FAKE_MARKET_JSON` at it, pass
+     `--no-review`, and start the section 3 note with "Prices web-quoted at <time> from <source>".
    The run first reconciles the Decision Ledger: rows Emmet marked `done` (with `fill_shares` and
    `fill_price`) become `applied` and update Holdings; `skipped` rows are closed. Chat replies never reach
    a scheduled run, so the Sheet is the only channel. Reconcile is the only thing a dry run writes, and it
@@ -89,6 +89,10 @@ Toolkit: the wheel `fundkit-0.1.0-py3-none-any.whl` in the same Drive folder, fi
    the project tool; if this session has no project tool, upload it instead to the Drive folder "Oaklink
    Fund" as `memo-<today>.md` (text/markdown, no conversion). In preview mode (step 0) or web-quoted
    mode, put that fact in the memo's first line.
+
+7a. **Keep the feed's ticker list current.** In the clone, rewrite `feed/tickers.txt` so it lists every
+   held (non-CASH) and watchlist ticker from `data/`, one per line, keep the comment header, and commit
+   and push if it changed. Next Saturday's feed then covers them.
 
 7. **Push the data back.** With the Google Sheets connector, replace the contents of the tabs
    Decision Ledger, Watchlist, Holdings and Performance with the current local CSVs

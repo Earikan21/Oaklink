@@ -18,11 +18,13 @@ def test_prompt_pulls_the_sheet_through_sheet_import():
     assert "fundkit sheet-export out.xlsx --data ./data" in PROMPT
 
 
-def test_prompt_web_quoted_mode_is_index_and_bond_only():
-    i = PROMPT.index("web-quoted mode")
-    block = PROMPT[i:PROMPT.index("4. **Write the notes.**")]
-    assert "nothing but CASH, `index_etf` and `bond_etf`" in block
-    assert "FUNDKIT_MARKET=fake FUNDKIT_FAKE_MARKET_JSON=market.json" in block and "--no-review" in block
+def test_prompt_runs_from_the_github_feed_with_web_quotes_as_last_resort():
+    block = PROMPT[PROMPT.index("3. **Get market data"):PROMPT.index("4. **Write the notes.**")]
+    assert "Earikan21/oaklink-fund-toolkit" in block and "feed/market.json" in block
+    assert "FUNDKIT_MARKET=fake FUNDKIT_FAKE_MARKET_JSON=<clone>/feed/market.json" in block
+    assert "gh workflow run market-feed.yml" in block
+    assert block.index("feed/market.json") < block.index("web-quoted mode")
+    assert "nothing but CASH, `index_etf` and `bond_etf`" in block and "--no-review" in block
 
 
 def test_readme_documents_install_from_release_zip():
