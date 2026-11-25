@@ -21,6 +21,7 @@ from fundkit.screen import MAX_PEERS, UNIVERSE_QUERY, peer_query
 
 FRAME_METHODS = ("income_stmt", "cashflow", "balance_sheet", "earnings_estimate", "eps_trend",
                  "eps_revisions", "earnings_dates")
+RF_TICKER = "^TNX"    # 10-year Treasury yield, quoted in percent
 LONG_HISTORY = "5y"   # held names, index and bond ETF: the benchmark runs from inception
 SHORT_HISTORY = "2y"  # screen candidates and peers: stage/correlation need ~1 year
 
@@ -111,6 +112,8 @@ def dump(market: MarketData, core: list[str], extra: list[str], out: Path,
     for t in core:
         if t and t not in seen:
             ordered.append((t, LONG_HISTORY)); seen.add(t)
+    if RF_TICKER not in seen:  # the risk-free rate the valuation reads (else it flags stale_rf)
+        ordered.append((RF_TICKER, SHORT_HISTORY)); seen.add(RF_TICKER)
     for t in list(extra) + universe:
         if t and t not in seen:
             ordered.append((t, SHORT_HISTORY)); seen.add(t)

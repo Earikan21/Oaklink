@@ -59,6 +59,7 @@ def test_dump_then_load_reproduces_quotes_frames_and_peer_screens(tmp_path, sour
     assert m.screen(peer_query(source.info("ACME"))) == ["PEER"]
     assert m.quote("PEER").price == 40.0 and "PEER" not in meta["universe"]
     assert any(e.startswith("NOPE.quote") for e in meta["errors"])
+    assert any(e.startswith("^TNX.quote") for e in meta["errors"])  # always requested, absent from this source
     with pytest.raises(MarketUnavailable):
         m.quote("NOPE")
     with pytest.raises(MarketUnavailable):

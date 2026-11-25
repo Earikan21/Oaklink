@@ -209,3 +209,11 @@ def test_methods_more_than_2x_apart_drop_confidence_to_low():
     v = value_company("ACME", m, peers=["P1", "P2", "P3"], rf=0.045)
     assert "methods_disagree" in v.flags and v.confidence == "low"
     assert max(v.dcf, v.relative) / min(v.dcf, v.relative) > 2
+
+
+def test_negative_dcf_with_positive_relative_is_a_disagreement():
+    from fundkit.research import valuation as V
+    m = _acme_market(ebit_margin=-0.30)  # losses -> negative DCF
+    v = value_company("ACME", m, peers=PEERS, rf=0.045)
+    assert v.dcf is not None and v.dcf < 0 < v.relative
+    assert "methods_disagree" in v.flags and v.confidence == "low"

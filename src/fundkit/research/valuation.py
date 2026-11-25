@@ -248,7 +248,8 @@ def value_company(ticker: str, market: MarketData, peers: list[str], rf: float |
     # --- blend -----------------------------------------------------------
     if dcf is not None and relative is not None:
         blended = 0.5 * dcf + 0.5 * relative
-        if dcf > 0 and relative > 0 and max(dcf, relative) / min(dcf, relative) > METHODS_DISAGREE_RATIO:
+        if (min(dcf, relative) <= 0 < max(dcf, relative)
+                or (min(dcf, relative) > 0 and max(dcf, relative) / min(dcf, relative) > METHODS_DISAGREE_RATIO)):
             flags.append("methods_disagree")  # one method is probably wrong; don't trust the average
     else:
         blended = dcf if dcf is not None else relative
