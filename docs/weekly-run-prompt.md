@@ -55,8 +55,11 @@ Fallback copy of the wheel `fundkit-0.1.0-py3-none-any.whl` in the Drive folder,
    the repo `Earikan21/Oaklink` (Saturday 05:40 UTC; see `feed/README.md` there).
    - In the clone from step 2, read `feed/market.json`'s `__meta__.generated`.
      If it is older than 3 days, or any held/watchlist ticker is missing from the file, append the missing
-     tickers to `feed/tickers.txt`, commit and push, run `gh workflow run market-feed.yml` in the clone,
-     wait for the run to finish (`gh run watch`, up to 20 minutes), and `git pull`.
+     tickers to `feed/tickers.txt`, commit and push (`git -c push.negotiate=true push`), dispatch the
+     Action with `gh api -X POST repos/Earikan21/Oaklink/actions/workflows/market-feed.yml/dispatches -f ref=main`
+     (GraphQL-based gh commands such as `gh workflow run` fail here; use `gh api` REST routes), poll
+     `gh api repos/Earikan21/Oaklink/actions/runs --jq '.workflow_runs[0] | {status,conclusion}'` every
+     30 s until `completed` (up to 20 minutes), then `git pull`.
    - Export `FUNDKIT_MARKET=fake FUNDKIT_FAKE_MARKET_JSON=<clone>/feed/market.json` for every `fundkit run`
      in this cycle, and start your section 3 note with "Market data: feed generated <generated>".
    - Then: `fundkit run --data ./data --today <today> --dry-run --json run.json --out memo.md`

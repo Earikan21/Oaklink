@@ -24,7 +24,7 @@ def test_prompt_runs_from_the_github_feed_with_web_quotes_as_last_resort():
     block = PROMPT[PROMPT.index("3. **Get market data"):PROMPT.index("4. **Write the notes.**")]
     assert "Earikan21/Oaklink" in block and "feed/market.json" in block
     assert "FUNDKIT_MARKET=fake FUNDKIT_FAKE_MARKET_JSON=<clone>/feed/market.json" in block
-    assert "gh workflow run market-feed.yml" in block
+    assert "actions/workflows/market-feed.yml/dispatches" in block
     assert block.index("feed/market.json") < block.index("web-quoted mode")
     assert "nothing but CASH, `index_etf` and `bond_etf`" in block and "--no-review" in block
 
