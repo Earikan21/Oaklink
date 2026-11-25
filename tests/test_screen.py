@@ -460,3 +460,9 @@ def test_seed_candidates_universe_failure_propagates():
             raise RuntimeError("screener down")
     with pytest.raises(RuntimeError):
         seed_candidates([], Down({}), TARGETS)
+
+
+def test_quality_ok_rejects_statement_currency_different_from_price_currency():
+    m = _q_market(10.0, 50.0)
+    m.data["X"]["info"].update({"currency": "USD", "financialCurrency": "CNY"})
+    assert quality_ok("X", m) == (False, ["statements in CNY, price in USD"])

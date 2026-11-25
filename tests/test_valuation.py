@@ -187,3 +187,10 @@ def test_debt_path_kd_and_ev_bridge():
         pv += fcff / (1 + wacc) ** t
     tv = 0.5 * (fcff * (1 + g) / (wacc - g) + (ebit + da) * 15)
     assert v.dcf == pytest.approx((pv + tv / (1 + wacc) ** 5 + 20.0 - 100.0) / 10.0)
+
+
+def test_valuation_refuses_statement_currency_different_from_price_currency():
+    from tests.conftest import _acme_market
+    m = _acme_market(info_overrides={"currency": "USD", "financialCurrency": "CNY"})
+    with pytest.raises(ValueError, match="statements in CNY but price in USD"):
+        value_company("ACME", m, peers=[])

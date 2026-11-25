@@ -52,7 +52,11 @@ def quality_ok(ticker: str, market: MarketData) -> tuple[bool, list[str]]:
         reasons.append("quality data unavailable")
     elif float(row.iloc[-1]) <= 0:
         reasons.append("FCF <= 0")
-    raw_de = market.info(ticker).get("debtToEquity")
+    info = market.info(ticker)
+    cur, fcur = info.get("currency"), info.get("financialCurrency")
+    if cur and fcur and cur != fcur:
+        reasons.append(f"statements in {fcur}, price in {cur}")
+    raw_de = info.get("debtToEquity")
     if raw_de is None:
         reasons.append("no debt/equity data")
     elif not _finite(raw_de):

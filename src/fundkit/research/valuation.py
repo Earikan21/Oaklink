@@ -75,6 +75,9 @@ def value_company(ticker: str, market: MarketData, peers: list[str], rf: float |
     for req in ("marketCap", "sharesOutstanding"):
         if _num(info.get(req)) is None:
             raise ValueError(f"valuation impossible: {ticker} info missing {req}")
+    cur, fcur = info.get("currency"), info.get("financialCurrency")
+    if cur and fcur and cur != fcur:  # e.g. an ADR priced in USD whose statements are in CNY
+        raise ValueError(f"valuation impossible: {ticker} statements in {fcur} but price in {cur}")
     mcap, shares = float(info["marketCap"]), float(info["sharesOutstanding"])
     debt = _num(info.get("totalDebt"), 0.0)
     cash = _num(info.get("totalCash"), 0.0)
