@@ -8,8 +8,10 @@ INSTALL = ("cp <that path> fundkit-0.1.0-py3-none-any.whl && "
            "pip install fundkit-0.1.0-py3-none-any.whl --break-system-packages")
 
 
-def test_prompt_installs_the_wheel_downloaded_from_drive():
-    assert INSTALL in PROMPT and "14e2Hn6ydcUPaj9Zyo94px6E-8yxY8JFt" in PROMPT
+def test_prompt_installs_from_the_clone_with_the_drive_wheel_as_fallback():
+    assert "pip install <clone> --break-system-packages" in PROMPT
+    assert INSTALL in PROMPT and "1NG9sZm8OAEPymfNuZbsZAeIyyZUBPCWu" in PROMPT
+    assert PROMPT.index("pip install <clone>") < PROMPT.index(INSTALL)
     assert "pip install <TOOLKIT_ZIP_PATH>" not in PROMPT and "<SHEET_FILE_ID>" not in PROMPT
 
 

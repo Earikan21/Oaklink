@@ -13,8 +13,9 @@ the identical date in steps 3, 5 and 6.
 
 Sheet: Google Sheet "Oaklink Fund Ledger", file id `16Twd-A7b9ELl1I-uMDoykIqOri95jafQb0jpLdVI9z8`
 (Drive folder "Oaklink Fund", id `1ehq1sI-KGKZAbziuYIPCfZkcKCqifVDT`).
-Toolkit: the wheel `fundkit-0.1.0-py3-none-any.whl` in the same Drive folder, file id
-`14e2Hn6ydcUPaj9Zyo94px6E-8yxY8JFt` (the full release zip is there too, for humans).
+Toolkit: the GitHub repo `Earikan21/Oaklink` (code, `.github/workflows/market-feed.yml`, `feed/`).
+Fallback copy of the wheel `fundkit-0.1.0-py3-none-any.whl` in the Drive folder, file id
+`1NG9sZm8OAEPymfNuZbsZAeIyyZUBPCWu`.
 
 0. **Check what you have.** You need (a) the Google Drive connector, (b) the Google Sheets connector
    (tools that read and write cell values, e.g. `get_values` / `update_values`), and (c) `pip` access.
@@ -42,15 +43,17 @@ Toolkit: the wheel `fundkit-0.1.0-py3-none-any.whl` in the same Drive folder, fi
    Emmet types values into the Sheet as ISO dates (`YYYY-MM-DD`) and plain numbers (`1500.5`, `0.05`);
    the import converts real date/number cells, but text like `$1,500.50` or `5%` will fail validation.
 
-2. **Install the toolkit.** Download the wheel with the Drive connector (`download_file_content` on the
-   file id above; the tool saves the bytes to a local path, whatever extension it gives it), then:
-   `cp <that path> fundkit-0.1.0-py3-none-any.whl && pip install fundkit-0.1.0-py3-none-any.whl --break-system-packages`
-   Check: `fundkit --help` lists `run`, `sheet-import`, `sheet-export`.
+2. **Get the toolkit.** Attach the repo `Earikan21/Oaklink` (add_repo, push access), clone it with the
+   command add_repo gives, and `pip install <clone> --break-system-packages`. If the repo cannot be
+   attached, download the fallback wheel with the Drive connector (`download_file_content` on the file id
+   above; the tool saves the bytes to a local path) and
+   `cp <that path> fundkit-0.1.0-py3-none-any.whl && pip install fundkit-0.1.0-py3-none-any.whl --break-system-packages`.
+   Check: `fundkit --help` lists `run`, `sheet-import`, `sheet-export`, `feed-dump`.
 
 3. **Get market data, then preview the cycle (dry run).** Yahoo Finance is NOT reachable from this
    environment, so the package runs from the feed file that the `market-feed` GitHub Action writes to
    the repo `Earikan21/Oaklink` (Saturday 05:40 UTC; see `feed/README.md` there).
-   - Attach the repo (add_repo, push access) and clone it; read `feed/market.json`'s `__meta__.generated`.
+   - In the clone from step 2, read `feed/market.json`'s `__meta__.generated`.
      If it is older than 3 days, or any held/watchlist ticker is missing from the file, append the missing
      tickers to `feed/tickers.txt`, commit and push, run `gh workflow run market-feed.yml` in the clone,
      wait for the run to finish (`gh run watch`, up to 20 minutes), and `git pull`.
