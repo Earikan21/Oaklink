@@ -49,7 +49,7 @@ Toolkit: the wheel `fundkit-0.1.0-py3-none-any.whl` in the same Drive folder, fi
 
 3. **Get market data, then preview the cycle (dry run).** Yahoo Finance is NOT reachable from this
    environment, so the package runs from the feed file that the `market-feed` GitHub Action writes to
-   the repo `Earikan21/oaklink-fund-toolkit` (Saturday 05:40 UTC; see `feed/README.md` there).
+   the repo `Earikan21/Oaklink` (Saturday 05:40 UTC; see `feed/README.md` there).
    - Attach the repo (add_repo, push access) and clone it; read `feed/market.json`'s `__meta__.generated`.
      If it is older than 3 days, or any held/watchlist ticker is missing from the file, append the missing
      tickers to `feed/tickers.txt`, commit and push, run `gh workflow run market-feed.yml` in the clone,
