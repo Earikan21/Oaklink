@@ -37,7 +37,7 @@ def source():
                 "history": make_history(300.0, 400)},
         "BND": {"quote": _q("BND", 75.0, "ETF"), "info": {"longName": "Vanguard Total Bond Market ETF", "quoteType": "ETF", "netExpenseRatio": 0.03},
                 "history": make_history(75.0, 400)},
-        "ACME": {"quote": _q("ACME", 50.0), "info": {"longName": "Acme", "quoteType": "EQUITY", "sector": "Industrials", "beta": 1.1, "nan_field": float("nan")},
+        "ACME": {"quote": _q("ACME", 50.0), "info": {"longName": "Acme", "quoteType": "EQUITY", "sector": "Industrials", "marketCap": 5e8, "beta": 1.1, "nan_field": float("nan")},
                  "history": make_history(50.0, 300, drift=0.001), "income_stmt": stmt,
                  "earnings_dates": pd.DataFrame({"EPS Estimate": [1.0], "Reported EPS": [1.1], "Surprise(%)": [10.0]},
                                                 index=pd.DatetimeIndex([pd.Timestamp("2026-10-30 16:30", tz="America/New_York")]))},
@@ -55,7 +55,8 @@ def test_dump_then_load_reproduces_quotes_frames_and_peer_screens(tmp_path, sour
     pd.testing.assert_frame_equal(m.income_stmt("ACME"), source.income_stmt("ACME"))
     assert m.earnings_dates("ACME").index[0].to_pydatetime().hour in (16, 20)  # kept as a timestamp, tz may be normalised
     assert m.screen(UNIVERSE_QUERY) == ["ACME", "NOPE"]
-    assert m.screen({"sector": "Industrials", "region": "us", "limit": MAX_PEERS + 1}) == ["PEER"]
+    from fundkit.screen import peer_query
+    assert m.screen(peer_query(source.info("ACME"))) == ["PEER"]
     assert m.quote("PEER").price == 40.0 and "PEER" not in meta["universe"]
     assert any(e.startswith("NOPE.quote") for e in meta["errors"])
     with pytest.raises(MarketUnavailable):

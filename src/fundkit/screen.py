@@ -73,12 +73,25 @@ def _fcf_row(cashflow: pd.DataFrame) -> pd.Series | None:
     return cashflow.loc["Free Cash Flow"].sort_index()
 
 
+PEER_SIZE_BAND = (0.2, 5.0)  # peers between 0.2x and 5x the company's market cap
+
+
+def peer_query(info: dict) -> dict | None:
+    """The screen that finds a company's peers: same sector, US-listed, similar size. None if unknowable."""
+    sector, mcap = info.get("sector"), info.get("marketCap")
+    if not sector or not isinstance(mcap, (int, float)) or mcap <= 0:
+        return None
+    lo, hi = PEER_SIZE_BAND
+    return {"sector": sector, "region": "us", "marketcap_gt": float(mcap) * lo, "marketcap_lt": float(mcap) * hi,
+            "limit": MAX_PEERS + 1}
+
+
 def peers_for(ticker: str, market: MarketData) -> list[str]:
     try:
-        sector = market.info(ticker).get("sector")
-        if not sector:
+        q = peer_query(market.info(ticker))
+        if q is None:
             return []
-        found = market.screen({"sector": sector, "region": "us", "limit": MAX_PEERS + 1})
+        found = market.screen(q)
     except Exception:  # peers are best-effort; the valuation flags `no_peers` and drops to low confidence
         return []
     return [t for t in found if t != ticker][:MAX_PEERS]

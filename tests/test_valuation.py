@@ -129,7 +129,12 @@ def test_growth_clamped():
     m = _acme_market()
     m.data["ACME"]["income_stmt"].loc["Total Revenue"] = [200.0, 110.0, 100.0]  # CAGR 0.414
     v = value_company("ACME", m, peers=PEERS, rf=0.045)
-    assert "growth_clamped" in v.flags and v.confidence == "medium"
+    assert "growth_clamped" in v.flags
+    # here the clamped DCF (~114) and the relative value (~47) are >2x apart, so confidence is low;
+    # with the relative method removed the clamp alone gives medium
+    assert "methods_disagree" in v.flags and v.confidence == "low"
+    v2 = value_company("ACME", m, peers=[], rf=0.045)
+    assert "growth_clamped" in v2.flags and "methods_disagree" not in v2.flags
 
 
 def test_no_dcf_fills_25_none_cells_and_still_blends():
@@ -194,3 +199,13 @@ def test_valuation_refuses_statement_currency_different_from_price_currency():
     m = _acme_market(info_overrides={"currency": "USD", "financialCurrency": "CNY"})
     with pytest.raises(ValueError, match="statements in CNY but price in USD"):
         value_company("ACME", m, peers=[])
+
+
+def test_methods_more_than_2x_apart_drop_confidence_to_low():
+    # peers at ~3x ACME's own multiples push the relative value far above the DCF
+    m = _acme_market(info_overrides={"forwardPE": 10.0})
+    for p in ("P1", "P2", "P3"):
+        m.data[p] = {"info": {"forwardPE": 60.0, "enterpriseToRevenue": 15.0, "enterpriseToEbitda": 60.0}}
+    v = value_company("ACME", m, peers=["P1", "P2", "P3"], rf=0.045)
+    assert "methods_disagree" in v.flags and v.confidence == "low"
+    assert max(v.dcf, v.relative) / min(v.dcf, v.relative) > 2

@@ -17,7 +17,7 @@ import pandas as pd
 
 from fundkit.market import MarketData, MarketUnavailable
 from fundkit.models import Quote
-from fundkit.screen import MAX_PEERS, UNIVERSE_QUERY
+from fundkit.screen import MAX_PEERS, UNIVERSE_QUERY, peer_query
 
 FRAME_METHODS = ("income_stmt", "cashflow", "balance_sheet", "earnings_estimate", "eps_trend",
                  "eps_revisions", "earnings_dates")
@@ -123,9 +123,8 @@ def dump(market: MarketData, core: list[str], extra: list[str], out: Path,
         grab(ticker, "history", lambda: _frame_to_json(market.history(ticker, period=period)))
         for m in FRAME_METHODS:
             grab(ticker, m, lambda m=m: _frame_to_json(getattr(market, m)(ticker)))
-        sector = (data.get(ticker, {}).get("info") or {}).get("sector")
-        if sector:
-            q = {"sector": sector, "region": "us", "limit": MAX_PEERS + 1}
+        q = peer_query(data.get(ticker, {}).get("info") or {})
+        if q:
             try:
                 found = [p for p in market.screen(q) if p != ticker][:MAX_PEERS]
                 data["__screens__"][screen_key(q)] = found

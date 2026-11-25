@@ -41,6 +41,7 @@ _SCREEN_FIELDS: dict[str, tuple[str, str]] = {
     "region": ("region", "eq"),
     "sector": ("sector", "eq"),
     "marketcap_gt": ("lastclosemarketcap.lasttwelvemonths", "gt"),
+    "marketcap_lt": ("lastclosemarketcap.lasttwelvemonths", "lt"),
     "pe_lt": ("peratio.lasttwelvemonths", "lt"),
     "de_lt": ("totaldebtequity.lasttwelvemonths", "lt"),
     # Substitution: yfinance has no 5y EPS CAGR screener field, so this uses

@@ -117,20 +117,29 @@ def test_quality_missing_data_fails():
 
 
 def test_peers_for_excludes_self_and_caps_at_five():
-    m = FakeMarket({"__screen__": ["ACME", "A", "B", "C", "D", "E"], "ACME": {"info": {"sector": "Industrials"}}})
+    m = FakeMarket({"__screen__": ["ACME", "A", "B", "C", "D", "E"],
+                    "ACME": {"info": {"sector": "Industrials", "marketCap": 1e10}}})
     assert peers_for("ACME", m) == ["A", "B", "C", "D", "E"]
 
 
-def test_peers_for_uses_the_recorded_sector_screen_when_present():
+def test_peer_query_is_same_sector_us_listed_and_similar_size():
+    from fundkit.screen import peer_query
+    assert peer_query({"sector": "Industrials", "marketCap": 1e10}) == {
+        "sector": "Industrials", "region": "us", "marketcap_gt": 2e9, "marketcap_lt": 5e10, "limit": 6}
+    assert peer_query({"sector": "Industrials"}) is None and peer_query({"marketCap": 1e10}) is None
+
+
+def test_peers_for_uses_the_recorded_peer_screen_when_present():
     from fundkit.feed import screen_key
-    q = {"sector": "Industrials", "region": "us", "limit": 6}
-    m = FakeMarket({"__screen__": ["X"], "__screens__": {screen_key(q): ["ACME", "P1", "P2"]},
-                    "ACME": {"info": {"sector": "Industrials"}}})
+    from fundkit.screen import peer_query
+    info = {"sector": "Industrials", "marketCap": 1e10}
+    m = FakeMarket({"__screen__": ["X"], "__screens__": {screen_key(peer_query(info)): ["ACME", "P1", "P2"]},
+                    "ACME": {"info": info}})
     assert peers_for("ACME", m) == ["P1", "P2"]
 
 
-def test_peers_for_empty_when_sector_missing():
-    m = FakeMarket({"__screen__": ["A"], "ACME": {"info": {}}})
+def test_peers_for_empty_when_sector_or_size_missing():
+    m = FakeMarket({"__screen__": ["A"], "ACME": {"info": {"marketCap": 1e9}}})
     assert peers_for("ACME", m) == []
 
 
@@ -138,7 +147,7 @@ def test_peers_for_empty_when_screen_raises():
     class Boom(FakeMarket):
         def screen(self, query):
             raise RuntimeError("down")
-    assert peers_for("ACME", Boom({"ACME": {"info": {"sector": "W"}}})) == []
+    assert peers_for("ACME", Boom({"ACME": {"info": {"sector": "W", "marketCap": 1e9}}})) == []
 
 
 # ---------------------------------------------------------------- gate

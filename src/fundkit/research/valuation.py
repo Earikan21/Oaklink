@@ -18,6 +18,9 @@ EXIT_MULTIPLE = 15.0
 WACC_OFFSETS = (-0.01, -0.005, 0.0, 0.005, 0.01)
 SENS_G = (0.015, 0.020, 0.025, 0.030, 0.035)
 
+METHODS_DISAGREE_RATIO = 2.0  # DCF and relative more than 2x apart -> confidence low
+
+
 
 class Valuation(BaseModel):
     ticker: str
@@ -245,13 +248,15 @@ def value_company(ticker: str, market: MarketData, peers: list[str], rf: float |
     # --- blend -----------------------------------------------------------
     if dcf is not None and relative is not None:
         blended = 0.5 * dcf + 0.5 * relative
+        if dcf > 0 and relative > 0 and max(dcf, relative) / min(dcf, relative) > METHODS_DISAGREE_RATIO:
+            flags.append("methods_disagree")  # one method is probably wrong; don't trust the average
     else:
         blended = dcf if dcf is not None else relative
     if blended is None or math.isnan(blended):
         raise ValueError(f"valuation impossible: no usable DCF or relative value for {ticker}")
 
     fl = set(flags)
-    if years < 3 or fl & {"no_dcf", "no_relative", "no_peers"} or any(f.startswith("missing:") for f in fl):
+    if years < 3 or fl & {"no_dcf", "no_relative", "no_peers", "methods_disagree"} or any(f.startswith("missing:") for f in fl):
         confidence = "low"
     elif fl & {"pe_skipped", "ev_ebitda_skipped", "g_capped", "tv_share", "growth_clamped"}:
         confidence = "medium"
