@@ -123,9 +123,9 @@ def dump(market: MarketData, core: list[str], extra: list[str], out: Path,
         grab(ticker, "history", lambda: _frame_to_json(market.history(ticker, period=period)))
         for m in FRAME_METHODS:
             grab(ticker, m, lambda m=m: _frame_to_json(getattr(market, m)(ticker)))
-        industry = (data.get(ticker, {}).get("info") or {}).get("industry")
-        if industry:
-            q = {"industry": industry, "limit": MAX_PEERS + 1}
+        sector = (data.get(ticker, {}).get("info") or {}).get("sector")
+        if sector:
+            q = {"sector": sector, "region": "us", "limit": MAX_PEERS + 1}
             try:
                 found = [p for p in market.screen(q) if p != ticker][:MAX_PEERS]
                 data["__screens__"][screen_key(q)] = found

@@ -125,6 +125,9 @@ def feed_dump(
             extra += [w.ticker for w in store.load_watchlist()]
         except ValueError:
             pass
+    else:  # no data dir (e.g. the GitHub Action): the IPS defaults still name the two ETFs
+        t = Targets()
+        core += [t.index_etf, t.bond_etf]
     extra += [x.strip().upper() for x in tickers.split(",") if x.strip()]
     if tickers_file and tickers_file.exists():
         for line in tickers_file.read_text().splitlines():

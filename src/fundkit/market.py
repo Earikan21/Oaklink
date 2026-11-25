@@ -35,10 +35,11 @@ class MarketData(Protocol):
     def screen(self, query: dict) -> list[str]: ...
 
 
-# screen() query key -> (yfinance field, operator). `industry` and `region` are equality.
+# screen() query key -> (yfinance field, operator). `sector` and `region` are equality.
+# (yfinance 1.8 validates `industry` against sector names only, so peers are screened by sector.)
 _SCREEN_FIELDS: dict[str, tuple[str, str]] = {
     "region": ("region", "eq"),
-    "industry": ("industry", "eq"),
+    "sector": ("sector", "eq"),
     "marketcap_gt": ("lastclosemarketcap.lasttwelvemonths", "gt"),
     "pe_lt": ("peratio.lasttwelvemonths", "lt"),
     "de_lt": ("totaldebtequity.lasttwelvemonths", "lt"),
@@ -47,6 +48,7 @@ _SCREEN_FIELDS: dict[str, tuple[str, str]] = {
     "eps_growth_5y_gt": ("epsgrowth.lasttwelvemonths", "gt"),
 }
 _DEFAULT_SCREEN_LIMIT = 25
+US_EXCHANGES = frozenset({"NMS", "NGM", "NCM", "NYQ", "ASE", "BTS"})  # Nasdaq tiers, NYSE, NYSE American, Cboe
 
 
 def build_equity_query(query: dict):
@@ -182,6 +184,12 @@ class YFMarket:
         return self._attr(ticker, "earnings_dates")
 
     def screen(self, query: dict) -> list[str]:
+        """Largest-first symbols on the main US exchanges that match `query`.
+
+        Yahoo's screener returns OTC/pink-sheet ADRs and foreign listings under region "us" and its
+        default order is arbitrary, so results are sorted by market cap and filtered to US_EXCHANGES
+        (oversampled 4x so the filter still returns up to `limit` names)."""
         q, limit = build_equity_query(query)
-        result = yf.screen(q, size=limit)
-        return [r["symbol"] for r in (result or {}).get("quotes", [])]
+        result = yf.screen(q, size=min(4 * limit, 250), sortField="intradaymarketcap", sortAsc=False)
+        quotes = (result or {}).get("quotes", [])
+        return [r["symbol"] for r in quotes if r.get("exchange", "NMS") in US_EXCHANGES][:limit]

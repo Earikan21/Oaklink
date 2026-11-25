@@ -36,7 +36,7 @@ def _quote(price: float, bid: float | None = 33.0, ask: float | None = 33.03) ->
 def gate_env(*, price=33.0, bid=33.0, ask=33.03, cand_drift=0.002, rho=0.0, peers=PEERS,
              dollars=150.0, info_extra=None, cashflow_fcf=None, dollars_held=150.0):
     """Clean candidate by default: upside ~0.31, stage 2, corr ~0, spread 0.09%, quality ok, $150 into $3k."""
-    market = _acme_market(info_overrides={"debtToEquity": 50.0, "industry": "Widgets", "longName": "Acme Corp",
+    market = _acme_market(info_overrides={"debtToEquity": 50.0, "sector": "Industrials", "longName": "Acme Corp",
                                           **(info_extra or {})})
     cand_ret = cand_drift + _noise(1)
     held_ret = 0.001 + rho * _noise(1) + np.sqrt(1 - rho ** 2) * _noise(2)
@@ -117,11 +117,19 @@ def test_quality_missing_data_fails():
 
 
 def test_peers_for_excludes_self_and_caps_at_five():
-    m = FakeMarket({"__screen__": ["ACME", "A", "B", "C", "D", "E"], "ACME": {"info": {"industry": "Widgets"}}})
+    m = FakeMarket({"__screen__": ["ACME", "A", "B", "C", "D", "E"], "ACME": {"info": {"sector": "Industrials"}}})
     assert peers_for("ACME", m) == ["A", "B", "C", "D", "E"]
 
 
-def test_peers_for_empty_when_industry_missing():
+def test_peers_for_uses_the_recorded_sector_screen_when_present():
+    from fundkit.feed import screen_key
+    q = {"sector": "Industrials", "region": "us", "limit": 6}
+    m = FakeMarket({"__screen__": ["X"], "__screens__": {screen_key(q): ["ACME", "P1", "P2"]},
+                    "ACME": {"info": {"sector": "Industrials"}}})
+    assert peers_for("ACME", m) == ["P1", "P2"]
+
+
+def test_peers_for_empty_when_sector_missing():
     m = FakeMarket({"__screen__": ["A"], "ACME": {"info": {}}})
     assert peers_for("ACME", m) == []
 
@@ -130,7 +138,7 @@ def test_peers_for_empty_when_screen_raises():
     class Boom(FakeMarket):
         def screen(self, query):
             raise RuntimeError("down")
-    assert peers_for("ACME", Boom({"ACME": {"info": {"industry": "W"}}})) == []
+    assert peers_for("ACME", Boom({"ACME": {"info": {"sector": "W"}}})) == []
 
 
 # ---------------------------------------------------------------- gate
@@ -219,7 +227,7 @@ def _watch(ticker="ACME", last=TODAY - timedelta(days=10), fair=40.0, upside=0.2
 
 
 def _refresh_market(price):
-    m = _acme_market(info_overrides={"industry": "Widgets"})
+    m = _acme_market(info_overrides={"sector": "Industrials"})
     m.data["ACME"]["quote"] = _quote(price)
     m.data["__screen__"] = ["ACME"] + PEERS
     return m
@@ -230,7 +238,7 @@ def test_refresh_only_stale_or_moved():
     fresh = _watch("ACME", fair=40.0, upside=0.25)            # price 32 -> +3% = 32.96, 10 days old
     moved = _watch("MOVE", fair=40.0, upside=0.25)            # +16% = 37.12
     m = _refresh_market(32.96)
-    m.data["MOVE"] = {**_acme_market(info_overrides={"industry": "Widgets"}).data["ACME"],
+    m.data["MOVE"] = {**_acme_market(info_overrides={"sector": "Industrials"}).data["ACME"],
                       "quote": _quote(37.12)}
     m.data["MOVE"]["quote"] = m.data["MOVE"]["quote"].model_copy(update={"ticker": "MOVE"})
     out = refresh_watchlist([fresh, moved], m, TARGETS, TODAY)

@@ -24,8 +24,8 @@ def _q(t, price, qt="EQUITY"):
 class _Source(FakeMarket):
     """FakeMarket whose screen honours industry queries, like YFMarket does."""
     def screen(self, query):
-        if "industry" in query:
-            return [t for t, e in self.data.items() if isinstance(e, dict) and (e.get("info") or {}).get("industry") == query["industry"]]
+        if "sector" in query:
+            return [t for t, e in self.data.items() if isinstance(e, dict) and (e.get("info") or {}).get("sector") == query["sector"]]
         return list(self.data["__screen__"])
 
 
@@ -37,11 +37,11 @@ def source():
                 "history": make_history(300.0, 400)},
         "BND": {"quote": _q("BND", 75.0, "ETF"), "info": {"longName": "Vanguard Total Bond Market ETF", "quoteType": "ETF", "netExpenseRatio": 0.03},
                 "history": make_history(75.0, 400)},
-        "ACME": {"quote": _q("ACME", 50.0), "info": {"longName": "Acme", "quoteType": "EQUITY", "industry": "Widgets", "beta": 1.1, "nan_field": float("nan")},
+        "ACME": {"quote": _q("ACME", 50.0), "info": {"longName": "Acme", "quoteType": "EQUITY", "sector": "Industrials", "beta": 1.1, "nan_field": float("nan")},
                  "history": make_history(50.0, 300, drift=0.001), "income_stmt": stmt,
                  "earnings_dates": pd.DataFrame({"EPS Estimate": [1.0], "Reported EPS": [1.1], "Surprise(%)": [10.0]},
                                                 index=pd.DatetimeIndex([pd.Timestamp("2026-10-30 16:30", tz="America/New_York")]))},
-        "PEER": {"quote": _q("PEER", 40.0), "info": {"longName": "Peer", "quoteType": "EQUITY", "industry": "Widgets"}},
+        "PEER": {"quote": _q("PEER", 40.0), "info": {"longName": "Peer", "quoteType": "EQUITY", "sector": "Industrials"}},
         "__screen__": ["ACME", "NOPE"],
     })
 
@@ -49,13 +49,13 @@ def source():
 def test_dump_then_load_reproduces_quotes_frames_and_peer_screens(tmp_path, source):
     meta = dump(source, core=["VTI", "BND"], extra=[], out=tmp_path / "f.json", log=lambda m: None)
     m = FakeMarket(load(tmp_path / "f.json"))
-    assert m.quote("VTI") == source.quote("VTI") and m.info("ACME")["industry"] == "Widgets"
+    assert m.quote("VTI") == source.quote("VTI") and m.info("ACME")["sector"] == "Industrials"
     assert m.info("ACME")["nan_field"] is None
     pd.testing.assert_frame_equal(m.history("VTI"), source.history("VTI"), check_freq=False)
     pd.testing.assert_frame_equal(m.income_stmt("ACME"), source.income_stmt("ACME"))
     assert m.earnings_dates("ACME").index[0].to_pydatetime().hour in (16, 20)  # kept as a timestamp, tz may be normalised
     assert m.screen(UNIVERSE_QUERY) == ["ACME", "NOPE"]
-    assert m.screen({"industry": "Widgets", "limit": MAX_PEERS + 1}) == ["PEER"]
+    assert m.screen({"sector": "Industrials", "region": "us", "limit": MAX_PEERS + 1}) == ["PEER"]
     assert m.quote("PEER").price == 40.0 and "PEER" not in meta["universe"]
     assert any(e.startswith("NOPE.quote") for e in meta["errors"])
     with pytest.raises(MarketUnavailable):
@@ -91,3 +91,11 @@ def test_weekly_run_works_from_a_feed_file(tmp_path, source, store_with_cash_300
     dump(source, core=["VTI", "BND"], extra=[], out=tmp_path / "f.json", log=lambda m: None)
     r = weekly_run(store_with_cash_3000, FakeMarket.from_json(tmp_path / "f.json"), date(2026, 11, 28), dry_run=True, force_review=True)
     assert [(p.action, p.ticker) for p in r.actions.proposals] == [("BUY", "VTI"), ("BUY", "BND")]
+
+
+def test_cli_feed_dump_without_data_dir_still_covers_index_and_bond(tmp_path, monkeypatch, source):
+    monkeypatch.setattr("fundkit.cli.YFMarket", lambda cache_dir, ttl_hours=20: source)
+    res = CliRunner().invoke(app, ["feed-dump", "--data", str(tmp_path / "nope"), "--out", str(tmp_path / "f.json"),
+                                   "--universe-limit", "1"])
+    assert res.exit_code == 0, res.output
+    assert json.loads((tmp_path / "f.json").read_text())["__meta__"]["core"] == ["VTI", "BND"]

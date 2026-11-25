@@ -71,10 +71,10 @@ def _fcf_row(cashflow: pd.DataFrame) -> pd.Series | None:
 
 def peers_for(ticker: str, market: MarketData) -> list[str]:
     try:
-        industry = market.info(ticker).get("industry")
-        if not industry:
+        sector = market.info(ticker).get("sector")
+        if not sector:
             return []
-        found = market.screen({"industry": industry, "limit": MAX_PEERS + 1})
+        found = market.screen({"sector": sector, "region": "us", "limit": MAX_PEERS + 1})
     except Exception:  # peers are best-effort; the valuation flags `no_peers` and drops to low confidence
         return []
     return [t for t in found if t != ticker][:MAX_PEERS]

@@ -48,7 +48,7 @@ def _market(prices: dict[str, float], candidates: tuple[str, ...] = (), held_his
     """Quotes for `prices`; each name in `candidates` is a clean gate candidate (ACME clone, upside ~0.31)."""
     m = FakeMarket({})
     if candidates:
-        m = _acme_market(info_overrides={"debtToEquity": 50.0, "industry": "Widgets", "longName": "Acme Corp"})
+        m = _acme_market(info_overrides={"debtToEquity": 50.0, "sector": "Industrials", "longName": "Acme Corp"})
         acme = m.data.pop("ACME")
         for i, t in enumerate(candidates):
             m.data[t] = {**acme, "quote": _q(t, 33.0, 33.0, 33.03, "EQUITY"), "history": _hist(10 + i)}

@@ -122,26 +122,28 @@ def test_statement_passthrough_cached(tmp_path, monkeypatch):
 
 
 def test_equity_query_mapping_and_unknown_key():
-    q, limit = build_equity_query({"region": "us", "pe_lt": 15, "industry": "Banks—Regional", "limit": 6})
+    q, limit = build_equity_query({"region": "us", "pe_lt": 15, "sector": "Financial Services", "limit": 6})
     assert limit == 6
     d = q.to_dict()
     assert d["operator"] == "AND"
     assert {"operator": "LT", "operands": ["peratio.lasttwelvemonths", 15]} in d["operands"]
-    assert {"operator": "EQ", "operands": ["industry", "Banks—Regional"]} in d["operands"]
+    assert {"operator": "EQ", "operands": ["sector", "Financial Services"]} in d["operands"]
     with pytest.raises(ValueError):
         build_equity_query({"bogus": 1})
 
 
-def test_screen_returns_symbols(tmp_path, monkeypatch):
+def test_screen_returns_largest_us_listed_symbols_only(tmp_path, monkeypatch):
     seen = {}
 
-    def fake_screen(query, size=None, **kw):
-        seen["size"] = size
-        return {"quotes": [{"symbol": "AAA"}, {"symbol": "BBB"}]}
+    def fake_screen(query, size=None, sortField=None, sortAsc=None, **kw):
+        seen.update(size=size, sortField=sortField, sortAsc=sortAsc)
+        return {"quotes": [{"symbol": "ZNGMF", "exchange": "PNK"}, {"symbol": "AAA", "exchange": "NMS"},
+                           {"symbol": "ZZ-B.ST", "exchange": "STO"}, {"symbol": "BBB", "exchange": "NYQ"},
+                           {"symbol": "CCC", "exchange": "ASE"}]}
 
     monkeypatch.setattr("fundkit.market.yf.screen", fake_screen)
-    assert YFMarket(tmp_path).screen({"industry": "Banks—Regional", "limit": 2}) == ["AAA", "BBB"]
-    assert seen["size"] == 2
+    assert YFMarket(tmp_path).screen({"sector": "Technology", "limit": 2}) == ["AAA", "BBB"]
+    assert seen == {"size": 8, "sortField": "intradaymarketcap", "sortAsc": False}
 
 
 def test_fake_market_unknown_ticker_raises():
