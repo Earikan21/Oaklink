@@ -9,7 +9,7 @@ from typing import Annotated, Optional
 import typer
 
 from fundkit.fake_market import FakeMarket, packaged_example
-from fundkit.models import Holding
+from fundkit.models import Holding, Targets
 from fundkit.market import MarketData, MarketUnavailable, YFMarket
 from fundkit.store import Store
 
