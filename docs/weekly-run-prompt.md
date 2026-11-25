@@ -15,7 +15,7 @@ Sheet: Google Sheet "Oaklink Fund Ledger", file id `16Twd-A7b9ELl1I-uMDoykIqOri9
 (Drive folder "Oaklink Fund", id `1ehq1sI-KGKZAbziuYIPCfZkcKCqifVDT`).
 Toolkit: the GitHub repo `Earikan21/Oaklink` (code, `.github/workflows/market-feed.yml`, `feed/`).
 Fallback copy of the wheel `fundkit-0.1.0-py3-none-any.whl` in the Drive folder, file id
-`1NG9sZm8OAEPymfNuZbsZAeIyyZUBPCWu`.
+`1u3KJqhoMrWQld632gtD6MWIV5q2swe4A`.
 
 0. **Check what you have.** You need (a) the Google Drive connector, (b) the Google Sheets connector
    (tools that read and write cell values, e.g. `get_values` / `update_values`), and (c) `pip` access.
